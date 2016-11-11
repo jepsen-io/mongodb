@@ -9,3 +9,9 @@ pom.xml.asc
 /.nrepl-port
 .hgignore
 .hg/
+.lein-repl-history
+.lein-deps-sum
+.lein-failures
+*~
+.*.swp
+/store

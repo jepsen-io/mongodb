@@ -7,7 +7,9 @@
             [clojure.walk :as walk]
             [jepsen [core      :as jepsen]
                     [db        :as db]
-                    [util      :as util :refer [meh timeout]]
+                    [util      :as util :refer [meh
+                                                random-nonempty-subset
+                                                timeout]]
                     [control   :as c :refer [|]]
                     [client    :as client]
                     [checker   :as checker]
@@ -16,6 +18,7 @@
                     [store     :as store]
                     [report    :as report]
                     [tests     :as tests]]
+            [jepsen.nemesis.time :as nt]
             [jepsen.control [net :as net]
                             [util :as cu]]
             [jepsen.os.debian :as debian]
@@ -33,40 +36,44 @@
   (cu/ensure-user! username)
 
   ; Download tarball
-  (let [local-file (nth (re-find #"file://(.+)" url) 1)
-        file       (or local-file (c/cd "/tmp" (str "/tmp/" (cu/wget! url))))]
-    (try
-      (c/cd "/opt"
-            ; Clean up old dir
-            (c/exec :rm :-rf "mongodb")
-            ; Create mongodb & data dir
-            (c/exec :mkdir :-p "mongodb/data")
-            ; Extract to mongodb
-            (c/exec :tar :xvf file :-C "mongodb" :--strip-components=1)
-            ; Permissions
-            (c/exec :chown :-R (str username ":" username) "mongodb"))
-    (catch RuntimeException e
-      (condp re-find (.getMessage e)
-        #"tar: Unexpected EOF"
-        (if local-file
-          ; Nothing we can do to recover here
-          (throw (RuntimeException.
-                   (str "Local tarball " local-file " on node " (name node)
-                        " is corrupt: unexpected EOF.")))
-          (do (info "Retrying corrupt tarball download")
-              (c/exec :rm :-rf file)
-              (install! node url)))
+  (c/su
+    (let [local-file (nth (re-find #"file://(.+)" url) 1)
+          file       (or local-file (c/cd "/tmp" (str "/tmp/" (cu/wget! url))))]
+      (try
+        (c/cd "/opt"
+              ; Clean up old dir
+              (c/exec :rm :-rf "mongodb")
+              ; Create mongodb & data dir
+              (c/exec :mkdir :-p "mongodb/data")
+              ; Extract to mongodb
+              (c/exec :tar :xvf file :-C "mongodb" :--strip-components=1)
+              ; Permissions
+              (c/exec :chown :-R (str username ":" username) "mongodb"))
+        (catch RuntimeException e
+          (condp re-find (.getMessage e)
+            #"tar: Unexpected EOF"
+            (if local-file
+              ; Nothing we can do to recover here
+              (throw (RuntimeException.
+                       (str "Local tarball " local-file " on node " (name node)
+                            " is corrupt: unexpected EOF.")))
+              (do (info "Retrying corrupt tarball download")
+                  (c/exec :rm :-rf file)
+                  (install! node url)))
 
-        ; Throw by default
-        (throw e))))))
+            ; Throw by default
+            (throw e)))))))
 
 (defn configure!
   "Deploy configuration files to the node."
   [test node]
-  (c/exec :echo (-> "mongod.conf" io/resource slurp
-                    (str/replace #"%STORAGE_ENGINE%" (:storage-engine test))
-                    (str/replace #"%PROTOCOL_VERSION%" (:protocol-version test)))
-          :> "/opt/mongodb/mongod.conf"))
+  (c/sudo username
+          (c/exec :echo (-> "mongod.conf" io/resource slurp
+                            (str/replace #"%STORAGE_ENGINE%"
+                                         (:storage-engine test))
+                            (str/replace #"%PROTOCOL_VERSION%"
+                                         (:protocol-version test)))
+                  :> "/opt/mongodb/mongod.conf")))
 
 (defn start!
   "Starts Mongod"
@@ -84,6 +91,7 @@
   "Stops Mongod"
   [test node]
   (cu/stop-daemon! "mongod" "/opt/mongodb/pidfile")
+  (c/su (c/exec :killall :-9 "mongod"))
   :stopped)
 
 (defn savelog!
@@ -91,6 +99,8 @@
   [node]
   (info node "copying mongod.log & stdout.log file to /root/")
   (c/su
+    (c/exec :mkdir :-p "/opt/mongodb")
+    (c/exec :chown (str username ":" username) "/opt/mongodb")
     (c/exec :touch "/opt/mongodb/mongod.log" "/opt/mongodb/stdout.log")
     (c/exec :cp :-f "/opt/mongodb/mongod.log" "/opt/mongodb/stdout.log" "/root/")))
 
@@ -155,10 +165,10 @@
   (m/admin-command! conn :replSetReconfig conf))
 
 (defn node+port->node
-  "Take a mongo \"n1:27107\" string and return just the node as a keyword:
+  "Take a mongo \"n1:27107\" string and return just the node as a string:
   :n1."
   [s]
-  (keyword ((re-find #"(\w+?):" s) 1)))
+  ((re-find #"(.+):\d+" s) 1))
 
 (defn primaries
   "What nodes does this conn think are primaries?"
@@ -223,7 +233,7 @@
   "Block until all nodes in the test are known to this connection's replset
   status"
   [test conn]
-  (while (try (not= (set (:nodes test))
+  (while (try (not= (set (map name (:nodes test)))
                     (->> (replica-set-status conn)
                          :members
                          (map :name)
@@ -234,6 +244,11 @@
                              (get-in (ex-data e) [:result "errmsg"]))
                   true
                   (throw e))))
+    (info :replica-set-status (with-out-str (->> (replica-set-status conn)
+                                                 :members
+                                                 (map :name)
+                                                 (map node+port->node)
+                                                 pprint)))
     (Thread/sleep 1000)))
 
 (defn target-replica-set-config
@@ -302,8 +317,9 @@
     (setup! [_ test node]
       (util/timeout 300000
                     (throw (RuntimeException.
-                             (str "Mongo setup on " node "timed out!")))
+                             (str "Mongo setup on " node " timed out!")))
                     (debian/install [:libc++1 :libsnmp30])
+                    (nt/install!)
                     (install! node url)
                     (configure! test node)
                     (start! test node)
@@ -349,19 +365,36 @@
                           {:type :info :f :stop}
                           {:type :info :f :start}])))))
 
-(defn random-nonempty-subset
-  [nodes]
-  (take (inc (rand-int (count nodes))) (shuffle nodes)))
-
 (defn kill-nem
   "A nemesis that kills/restarts Mongo on randomly selected nodes."
   []
-  (nemesis/node-start-stopper random-nonempty-subset start!  stop!))
+  (nemesis/node-start-stopper random-nonempty-subset start! stop!))
 
 (defn pause-nem
   "A nemesis that pauses Mongo on randomly selected nodes."
   []
   (nemesis/hammer-time random-nonempty-subset "mongod"))
+
+(defn clock-skew-nem
+  "Skews clocks on a random subset of nodes by dt seconds."
+  [dt]
+  (reify client/Client
+    (setup! [this test _]
+      (nt/reset-time! test)
+      this)
+
+    (invoke! [this test op]
+      (assoc op :value
+             (case (:f op)
+               :start (c/with-test-nodes test
+                        (if (< (rand) 0.5)
+                          (do (nt/bump-time! (* 1000 dt))
+                              dt)
+                          0))
+               :stop (info c/*host* "clock reset:" (nt/reset-time! test)))))
+
+    (teardown! [this test]
+      (nt/reset-time! test))))
 
 (defn test-
   "Constructs a test with the given name prefixed by 'mongodb ', merging any
@@ -379,5 +412,5 @@
            :os              debian/os
            :db              (db (:tarball opts))
            :checker         (checker/perf)
-           :nemesis         (pause-nem))
+           :nemesis         (clock-skew-nem 60000))
     opts))
