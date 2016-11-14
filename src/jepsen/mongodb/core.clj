@@ -91,7 +91,7 @@
   "Stops Mongod"
   [test node]
   (cu/stop-daemon! "mongod" "/opt/mongodb/pidfile")
-  (c/su (c/exec :killall :-9 "mongod"))
+  (meh (c/su (c/exec :killall :-9 "mongod")))
   :stopped)
 
 (defn savelog!
@@ -99,10 +99,10 @@
   [node]
   (info node "copying mongod.log & stdout.log file to /root/")
   (c/su
-    (c/exec :mkdir :-p "/opt/mongodb")
-    (c/exec :chown (str username ":" username) "/opt/mongodb")
-    (c/exec :touch "/opt/mongodb/mongod.log" "/opt/mongodb/stdout.log")
-    (c/exec :cp :-f "/opt/mongodb/mongod.log" "/opt/mongodb/stdout.log" "/root/")))
+    (meh (c/exec :cp :-f
+                 "/opt/mongodb/mongod.log"
+                 "/opt/mongodb/stdout.log"
+                 "/root/"))))
 
 (defn wipe!
   "Shuts down MongoDB and wipes data."
@@ -261,6 +261,7 @@
                  :nodes
                  (map-indexed (fn [i node]
                                 {:_id  i
+                                 :priority (- (count (:nodes test)) i)
                                  :host (str (name node) ":27017")})))})
 
 (defn join!
@@ -354,21 +355,10 @@
        (catch com.mongodb.MongoSocketReadTimeoutException e#
          (assoc ~op :type error-type# :error :socket-read)))))
 
-(defn std-gen
-  "Takes a client generator and wraps it in a typical schedule and nemesis
-  causing failover."
-  [gen]
-  (->> gen
-       (gen/stagger 1)
-       (gen/nemesis
-         (gen/seq (cycle [(gen/sleep 20)
-                          {:type :info :f :stop}
-                          {:type :info :f :start}])))))
-
 (defn kill-nem
   "A nemesis that kills/restarts Mongo on randomly selected nodes."
   []
-  (nemesis/node-start-stopper random-nonempty-subset start! stop!))
+  (nemesis/node-start-stopper random-nonempty-subset stop! start!))
 
 (defn pause-nem
   "A nemesis that pauses Mongo on randomly selected nodes."
@@ -396,6 +386,37 @@
     (teardown! [this test]
       (nt/reset-time! test))))
 
+(defn nemesis-gen
+  "Given a nemesis name, builds a generator that emits [:name-start,
+  :name-stop] cycles."
+  [nem]
+  (gen/seq
+    (cycle
+      [{:type :info, :f (keyword (str (name nem) "-start")), :value nil}
+       {:type :info, :f (keyword (str (name nem) "-stop" )), :value nil}])))
+
+(defn std-gen
+  "Takes a client generator and wraps it in a typical schedule and nemesis
+  causing failover."
+  [gen]
+  (->> gen
+       (gen/stagger 1)
+       (gen/nemesis
+         (->> [:part :skew] ; :kill :pause]
+              (mapv nemesis-gen)
+              (gen/mix)
+              (gen/delay 5)))))
+
+(defn composite-nemesis
+  "Combined nemesis for process kills, pauses, partitions, and clock skew."
+  []
+  (nemesis/compose
+    {{:part-start  :start, :part-stop  :stop}
+     (nemesis/partition-majorities-ring)
+     {:skew-start  :start, :skew-stop  :stop} (clock-skew-nem 256)}))
+;     {:kill-start  :start, :kill-stop  :stop} (kill-nem)
+;     {:pause-start :start, :pause-stop :stop} (pause-nem)}))
+
 (defn test-
   "Constructs a test with the given name prefixed by 'mongodb ', merging any
   given options. Special options for Mongo:
@@ -412,5 +433,5 @@
            :os              debian/os
            :db              (db (:tarball opts))
            :checker         (checker/perf)
-           :nemesis         (clock-skew-nem 60000))
+           :nemesis         (composite-nemesis))
     opts))
