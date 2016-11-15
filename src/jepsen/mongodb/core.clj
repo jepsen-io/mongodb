@@ -257,6 +257,9 @@
   (assert (integer? (:protocol-version test)))
   {:_id "jepsen"
    :protocolVersion (:protocol-version test)
+   :settings {:heartbeatIntervalMillis 50  ; protocol v1, ms
+              :electionTimeoutMillis   100 ; protocol v1, ms
+              :heartbeatTimeoutSecs    1}  ; protocol v0, s
    :members (->> test
                  :nodes
                  (map-indexed (fn [i node]
