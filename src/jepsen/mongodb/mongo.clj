@@ -31,7 +31,7 @@
   []
   (.build
     (doto (MongoClientOptions/builder)
-      (.serverSelectionTimeout   300000)
+      (.serverSelectionTimeout   1000)
       (.maxWaitTime              60000)
       (.connectTimeout           60000)
       (.socketTimeout            30000))))
@@ -157,6 +157,13 @@
   [client & command]
   (apply run-command! (db client "admin") command))
 
+(defn find-all
+  "Finds all docs in a collection."
+  [^MongoCollection coll]
+  (-> coll
+      (.find)
+      (map document->map)))
+
 (defn find-one
   "Find a document by ID."
   [^MongoCollection coll id]
@@ -184,6 +191,12 @@
                      (.getModifiedCount r))
    :upserted-id    (.getUpsertedId r)
    :acknowledged?  (.wasAcknowledged r)})
+
+(defn insert!
+  "Inserts a document."
+  [^MongoCollection coll doc]
+  (-> coll
+      (.insertOne (document doc))))
 
 (defn replace!
   "Replace a document by a document's :_id."

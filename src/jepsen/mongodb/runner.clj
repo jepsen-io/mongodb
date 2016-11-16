@@ -16,7 +16,7 @@
   "Command line option specification for tools.cli."
   [[nil "--key-time-limit SECONDS"
     "How long should we test an individual key for, in seconds?"
-    :default  30
+    :default  100
     :parse-fn #(Long/parseLong %)
     :validate [pos? "Must be positive"]]
 

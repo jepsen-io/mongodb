@@ -8,6 +8,10 @@
             [jepsen [core      :as jepsen]
                     [db        :as db]
                     [util      :as util :refer [meh
+                                                real-pmap
+                                                with-thread-name
+                                                fcatch
+                                                exception?
                                                 random-nonempty-subset
                                                 timeout]]
                     [control   :as c :refer [|]]
@@ -15,12 +19,12 @@
                     [checker   :as checker]
                     [generator :as gen]
                     [nemesis   :as nemesis]
+                    [net       :as net]
                     [store     :as store]
                     [report    :as report]
                     [tests     :as tests]]
             [jepsen.nemesis.time :as nt]
-            [jepsen.control [net :as net]
-                            [util :as cu]]
+            [jepsen.control [util :as cu]]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb.mongo :as m]
             [knossos [core :as knossos]
@@ -70,9 +74,7 @@
   (c/sudo username
           (c/exec :echo (-> "mongod.conf" io/resource slurp
                             (str/replace #"%STORAGE_ENGINE%"
-                                         (:storage-engine test))
-                            (str/replace #"%PROTOCOL_VERSION%"
-                                         (:protocol-version test)))
+                                         (:storage-engine test)))
                   :> "/opt/mongodb/mongod.conf")))
 
 (defn start!
@@ -257,9 +259,9 @@
   (assert (integer? (:protocol-version test)))
   {:_id "jepsen"
    :protocolVersion (:protocol-version test)
-   :settings {:heartbeatIntervalMillis 50  ; protocol v1, ms
-              :electionTimeoutMillis   100 ; protocol v1, ms
-              :heartbeatTimeoutSecs    1}  ; protocol v0, s
+   :settings {:heartbeatIntervalMillis 5000  ; protocol v1, ms
+              :electionTimeoutMillis   10000 ; protocol v1, ms
+              :heartbeatTimeoutSecs    10}  ; protocol v0, s
    :members (->> test
                  :nodes
                  (map-indexed (fn [i node]
@@ -348,8 +350,20 @@
                        :info)]
      (try
        ~@body
+       (catch com.mongodb.MongoQueryException e#
+         (case (.getCode e#)
+           189   (assoc ~op :type :fail, :error :stepped-down)
+           10107 (assoc ~op :type :fail, :error :not-primary)
+           (throw e#)))
+
        (catch com.mongodb.MongoNotPrimaryException e#
          (assoc ~op :type :fail, :error :not-primary))
+
+       (catch com.mongodb.MongoTimeoutException e#
+         (condp re-find (.getMessage e#)
+           #"Timed out .+? while waiting for a server that matches .+?ServerSelector"
+           (assoc ~op :type :fail, :error :no-ready-server)
+           (throw e#)))
 
        ; A network error is indeterminate
        (catch com.mongodb.MongoSocketReadException e#
@@ -399,16 +413,12 @@
        {:type :info, :f (keyword (str (name nem) "-stop" )), :value nil}])))
 
 (defn std-gen
-  "Takes a client generator and wraps it in a typical schedule and nemesis
-  causing failover."
-  [gen]
-  (->> gen
-       (gen/stagger 1)
-       (gen/nemesis
-         (->> [:part :skew] ; :kill :pause]
-              (mapv nemesis-gen)
-              (gen/mix)
-              (gen/delay 5)))))
+  "A composite failure schedule, emitting partitions and clock skew ops."
+  []
+  (->> [:part :skew] ; :kill :pause]
+       (mapv nemesis-gen)
+       (gen/mix)
+       (gen/delay 5)))
 
 (defn composite-nemesis
   "Combined nemesis for process kills, pauses, partitions, and clock skew."
@@ -419,6 +429,75 @@
      {:skew-start  :start, :skew-stop  :stop} (clock-skew-nem 256)}))
 ;     {:kill-start  :start, :kill-stop  :stop} (kill-nem)
 ;     {:pause-start :start, :pause-stop :stop} (pause-nem)}))
+
+
+(defn primary-divergence-nemesis
+  "A nemesis specifically designed to break Mongo's v0 replication protocol.
+  There are three phases:
+
+  1. Isolate a primary p1 and advance its clock. Writes to this primary will
+  not be successfully replicated, but will advance its oplog.
+
+  2. Allow a new primary p2 to become elected. Let it do some work, then kill
+  it.
+
+  3. Heal the network and restart all nodes. p2 may have committed writes, but
+  p1's higher optime will allow it to win the election."
+  ([] (primary-divergence-nemesis nil))
+  ([conns]
+  (reify client/Client
+    (setup! [this test _]
+      (primary-divergence-nemesis
+        (into {} (real-pmap (juxt identity await-conn) (:nodes test)))))
+
+    (invoke! [this test op]
+      (assoc
+        op :value
+        (case (:f op)
+          :isolate (dorun
+                     (real-pmap (fn [[node conn]]
+                                  (when (= node (primary conn))
+                                    (info node "believes itself a primary")
+                                    (->> (nemesis/split-one node (:nodes test))
+                                         nemesis/complete-grudge
+                                         (nemesis/partition! test))
+                                    (info node "isolated")
+
+                                    (c/with-session node (get (:sessions test)
+                                                              node)
+                                      (nt/bump-time! 120000))
+                                    (info node "clock advanced")))
+                                conns))
+          :kill (dorun
+                  (real-pmap (fn [[node conn]]
+                               (when (= node (primary conn))
+                                 (info node "believes itself a primary")
+
+                                 (c/with-session node (get (:sessions test)
+                                                           node)
+                                   (meh (c/su (c/exec :killall :-9 "mongod"))))
+                                 (info node "mongod killed")))
+                             conns))
+
+          :recover (do (nt/reset-time! test)
+                       (info "Clocks reset")
+                       (net/heal! (:net test) test)
+                       (info "Network healed")
+                       (c/on-nodes test start!)
+                       (info "Nodes restarted")))))
+
+    (teardown! [this test]
+               (doseq [[node c] conns]
+                 (.close c))))))
+
+(defn primary-divergence-gen
+  []
+  (gen/seq
+    (cycle [{:type :info, :f :isolate, :value nil}
+            (gen/sleep 30)
+            {:type :info, :f :kill,    :value nil}
+            {:type :info, :f :recover, :value nil}
+            (gen/sleep 30)])))
 
 (defn test-
   "Constructs a test with the given name prefixed by 'mongodb ', merging any
@@ -436,5 +515,8 @@
            :os              debian/os
            :db              (db (:tarball opts))
            :checker         (checker/perf)
-           :nemesis         (composite-nemesis))
-    opts))
+           :nemesis         (primary-divergence-nemesis)
+           :generator       (->> (:generator opts)
+                                 (gen/nemesis (primary-divergence-gen))
+                                 (gen/time-limit (:time-limit opts))))
+    (dissoc opts :generator)))

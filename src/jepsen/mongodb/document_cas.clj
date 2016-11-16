@@ -35,7 +35,7 @@
                    coll]
   client/Client
   (setup! [this test node]
-    (let [client (m/cluster-client test)
+    (let [client (m/client node)
           coll   (-> client
                      (m/db db-name)
                      (m/collection coll-name)
@@ -45,7 +45,7 @@
       (assoc this :client client, :coll coll)))
 
   (invoke! [this test op]
-    ; Reads are idempotent; we can treat their failure as an info.
+    ; Reads are idempotent; we can treat their failure as a :fail.
     (with-errors op #{:read}
       (let [id    (key (:value op))
             value (val (:value op))]
@@ -129,8 +129,7 @@
                                                          r))
                                         (gen/time-limit
                                           (:key-time-limit opts)))))
-                               std-gen
-                               (gen/time-limit (:time-limit opts)))
+                               (gen/stagger 1))
             :model        (model/cas-register)
             :checker      (checker/compose
                             {:linear  (independent/checker checker/linearizable)
