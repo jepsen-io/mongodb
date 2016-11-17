@@ -212,14 +212,13 @@
                        (catch Throwable t
                          (.close conn)
                          (throw t))))
+                   (catch com.mongodb.MongoTimeoutException e
+                     (info "Mongo timeout while waiting for conn; retrying. "
+                           (.getMessage e))
+                     nil)
                    (catch com.mongodb.MongoSocketReadTimeoutException e
                      (info "Mongo socket read timeout waiting for conn; retrying")
-                     nil)
-;                   (catch com.mongodb.MongoServerSelectionException e
-;                     nil))
-                    ; Todo: figure out what Mongo 3.x throws when servers
-                    ; aren't ready yet
-                    )
+                     nil))
                  ; If we aren't ready, sleep and retry
                  (do
                    (Thread/sleep 1000)
@@ -259,9 +258,9 @@
   (assert (integer? (:protocol-version test)))
   {:_id "jepsen"
    :protocolVersion (:protocol-version test)
-   :settings {:heartbeatIntervalMillis 5000  ; protocol v1, ms
-              :electionTimeoutMillis   10000 ; protocol v1, ms
-              :heartbeatTimeoutSecs    10}  ; protocol v0, s
+   :settings {:heartbeatIntervalMillis 2500  ; protocol v1, ms
+              :electionTimeoutMillis   5000 ; protocol v1, ms
+              :heartbeatTimeoutSecs    5}  ; protocol v0, s
    :members (->> test
                  :nodes
                  (map-indexed (fn [i node]
@@ -479,12 +478,12 @@
                                  (info node "mongod killed")))
                              conns))
 
-          :recover (do (nt/reset-time! test)
-                       (info "Clocks reset")
-                       (net/heal! (:net test) test)
-                       (info "Network healed")
-                       (c/on-nodes test start!)
-                       (info "Nodes restarted")))))
+          :stop (do (nt/reset-time! test)
+                    (info "Clocks reset")
+                    (net/heal! (:net test) test)
+                    (info "Network healed")
+                    (c/on-nodes test start!)
+                    (info "Nodes restarted")))))
 
     (teardown! [this test]
                (doseq [[node c] conns]
@@ -496,7 +495,7 @@
     (cycle [{:type :info, :f :isolate, :value nil}
             (gen/sleep 30)
             {:type :info, :f :kill,    :value nil}
-            {:type :info, :f :recover, :value nil}
+            {:type :info, :f :stop,    :value nil}
             (gen/sleep 30)])))
 
 (defn test-
@@ -514,9 +513,16 @@
                                  " p:" (:protocol-version opts))
            :os              debian/os
            :db              (db (:tarball opts))
-           :checker         (checker/perf)
            :nemesis         (primary-divergence-nemesis)
-           :generator       (->> (:generator opts)
-                                 (gen/nemesis (primary-divergence-gen))
-                                 (gen/time-limit (:time-limit opts))))
-    (dissoc opts :generator)))
+           :generator       (gen/phases
+                              (->> (:generator opts)
+                                   (gen/nemesis (primary-divergence-gen))
+                                   (gen/time-limit (:time-limit opts)))
+                              (gen/nemesis
+                                (gen/once {:type :info, :f :stop, :value nil}))
+                              (gen/sleep 20)
+                              (gen/clients
+                                (:final-generator opts))))
+    (dissoc opts
+            :generator
+            :final-generator)))

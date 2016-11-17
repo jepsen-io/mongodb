@@ -160,9 +160,9 @@
 (defn find-all
   "Finds all docs in a collection."
   [^MongoCollection coll]
-  (-> coll
-      (.find)
-      (map document->map)))
+  (->> coll
+       (.find)
+       (map document->map)))
 
 (defn find-one
   "Find a document by ID."

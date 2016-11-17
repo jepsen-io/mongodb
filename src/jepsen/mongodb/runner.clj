@@ -8,6 +8,7 @@
             [clojure.string :as str]
             [jepsen.mongodb [core :as m]
                             [mongo :as client]
+                            [set :as set]
                             [document-cas :as dc]]
             [jepsen [cli :as jc]
                     [core :as jepsen]]))
@@ -62,7 +63,7 @@
 
                        ; Run test
                        (doseq [i (range (:test-count options))]
-                         (let [test (jepsen/run! (dc/test options))]
+                         (let [test (jepsen/run! (set/test options))]
                            (when-not (:valid? (:results test))
                              (System/exit 1)))))}})
 
