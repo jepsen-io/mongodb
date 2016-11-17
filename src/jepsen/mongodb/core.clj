@@ -520,7 +520,7 @@
                                    (gen/time-limit (:time-limit opts)))
                               (gen/nemesis
                                 (gen/once {:type :info, :f :stop, :value nil}))
-                              (gen/sleep 20)
+                              (gen/sleep 40)
                               (gen/clients
                                 (:final-generator opts))))
     (dissoc opts

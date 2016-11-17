@@ -58,7 +58,9 @@
                        gen/seq
                        (gen/stagger 1/2))
        :final-generator (gen/each
-                          (gen/once {:type :invoke, :f :read, :value nil}))
+                          ; First one wakes up the mongo client, second one
+                          ; reads
+                          (gen/limit 2 {:type :invoke, :f :read, :value nil}))
        :checker (checker/compose
                   {:set      checker/set
                    :timeline (timeline/html)
