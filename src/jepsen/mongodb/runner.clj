@@ -13,6 +13,10 @@
             [jepsen [cli :as jc]
                     [core :as jepsen]]))
 
+(def test-names
+  {"set" set/test
+   "register" dc/test})
+
 (def opt-spec
   "Command line option specification for tools.cli."
   [[nil "--key-time-limit SECONDS"
@@ -43,13 +47,18 @@
     :default  1
     :parse-fn #(Long/parseLong %)
     :validate [(complement neg?) "Must be non-negative"]]
-  ])
+
+   ["-t" "--test TEST-NAME" "Test to run"
+    :default  set/test
+    :parse-fn test-names
+    :validate [identity (jc/one-of test-names)]]])
 
 (defn -main
   [& args]
-  (jc/run! (merge (jc/serve-cmd)
-                  (jc/single-test-cmd
-                    {:opt-spec opt-spec
-                     :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.4.0-rc3.tgz"
-                     :test-fn set/test}))
-           args))
+  (jc/run!
+    (merge (jc/serve-cmd)
+           (jc/single-test-cmd
+             {:opt-spec opt-spec
+              :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.4.0-rc3.tgz"
+              :test-fn (fn [opts] ((:test opts) (dissoc opts :test)))}))
+    args))
