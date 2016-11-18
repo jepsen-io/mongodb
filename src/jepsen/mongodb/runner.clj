@@ -43,32 +43,13 @@
     :default  1
     :parse-fn #(Long/parseLong %)
     :validate [(complement neg?) "Must be non-negative"]]
-
-   [nil "--tarball URL" "URL for the Mongo tarball to install. May be either HTTP, HTTPS, or a local file. For instance, --tarball https://foo.com/mongo.tgz, or file:///tmp/mongo.tgz"
-    :default  "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.4.0-rc3.tgz"
-    :validate [(partial re-find #"^(file|https?)://.*\.(tar\.gz|tgz)")
-               "Must be a file://, http://, or https:// URL ending in .tar.gz or .tgz"]]
   ])
-
-(defn test-cmd
-  []
-  {"test" {:opt-spec (into jc/test-opt-spec opt-spec)
-           :opt-fn   #(-> %
-                          (jc/rename-options {:node :nodes})
-                          jc/validate-tarball
-                          jc/read-nodes-file)
-           :usage    jc/test-usage
-           :run      (fn [{:keys [options]}]
-                       (info "Test options:\n" (with-out-str (pprint options)))
-
-                       ; Run test
-                       (doseq [i (range (:test-count options))]
-                         (let [test (jepsen/run! (set/test options))]
-                           (when-not (:valid? (:results test))
-                             (System/exit 1)))))}})
 
 (defn -main
   [& args]
   (jc/run! (merge (jc/serve-cmd)
-                  (test-cmd))
+                  (jc/single-test-cmd
+                    {:opt-spec opt-spec
+                     :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.4.0-rc3.tgz"
+                     :test-fn set/test}))
            args))
