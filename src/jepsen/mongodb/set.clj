@@ -13,15 +13,15 @@
             [jepsen.mongodb.core :refer :all]
             [jepsen.mongodb.mongo :as m]))
 
-(defrecord Client [db-name coll-name client coll]
+(defrecord Client [db-name coll-name read-concern write-concern client coll]
   client/Client
   (setup! [this test node]
     (let [client (m/client node)
           coll  (-> client
                     (m/db db-name)
                     (m/collection coll-name)
-                    (m/with-read-concern :linearizable)
-                    (m/with-write-concern :majority))]
+                    (m/with-read-concern read-concern)
+                    (m/with-write-concern write-concern))]
       (assoc this :client client, :coll coll)))
 
   (invoke! [this test op]
@@ -42,7 +42,10 @@
 (defn client
   "A set test client"
   [opts]
-  (Client. "jepsen" "set" nil nil))
+  (Client. "jepsen" "set"
+           (:read-concern opts)
+          (:write-concern opts)
+          nil nil))
 
 (defn test
   "A set test, which inserts a sequence of integers into a collection, and
