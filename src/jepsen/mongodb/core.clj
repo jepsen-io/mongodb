@@ -455,7 +455,7 @@
         (case (:f op)
           :isolate (dorun
                      (real-pmap (fn [[node conn]]
-                                  (when (= node (primary conn))
+                                  (when (= (name node) (primary conn))
                                     (info node "believes itself a primary")
                                     (->> (nemesis/split-one node (:nodes test))
                                          nemesis/complete-grudge
@@ -469,7 +469,7 @@
                                 conns))
           :kill (dorun
                   (real-pmap (fn [[node conn]]
-                               (when (= node (primary conn))
+                               (when (= (name node) (primary conn))
                                  (info node "believes itself a primary")
 
                                  (c/with-session node (get (:sessions test)
