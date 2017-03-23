@@ -74,7 +74,10 @@
   (c/sudo username
           (c/exec :echo (-> "mongod.conf" io/resource slurp
                             (str/replace #"%STORAGE_ENGINE%"
-                                         (:storage-engine test)))
+                                         (:storage-engine test))
+                            (str/replace #"%ENABLE_MAJORITY_READ_CONCERN%"
+                                         (str (= (:read-concern test)
+                                                 :majority))))
                   :> "/opt/mongodb/mongod.conf")))
 
 (defn start!
