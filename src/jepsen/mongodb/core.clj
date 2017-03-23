@@ -5,6 +5,7 @@
             [clojure.pprint :refer [pprint]]
             [clojure.tools.logging :refer [debug info warn]]
             [clojure.walk :as walk]
+            [clj-time.core :as time]
             [jepsen [core      :as jepsen]
                     [db        :as db]
                     [util      :as util :refer [meh
@@ -26,6 +27,7 @@
             [jepsen.nemesis.time :as nt]
             [jepsen.control [util :as cu]]
             [jepsen.os.debian :as debian]
+            [jepsen.mongodb.time :as mt]
             [jepsen.mongodb.mongo :as m]
             [knossos [core :as knossos]
                      [model :as model]])
@@ -82,14 +84,15 @@
 
 (defn start!
   "Starts Mongod"
-  [test node]
+  [clock test node]
   (c/sudo username
-          (cu/start-daemon! {:logfile "/opt/mongodb/stdout.log"
-                             :pidfile "/opt/mongodb/pidfile"
-                             :remove-pidfile? false
-                             :chdir   "/opt/mongodb"}
-                            "/opt/mongodb/bin/mongod"
-                            :--config "/opt/mongodb/mongod.conf"))
+          (apply cu/start-daemon!
+                 {:logfile "/opt/mongodb/stdout.log"
+                  :pidfile "/opt/mongodb/pidfile"
+                  :remove-pidfile? false
+                  :chdir   "/opt/mongodb"}
+                 (conj (mt/wrap! clock "/opt/mongodb/bin/mongod")
+                       :--config "/opt/mongodb/mongod.conf")))
   :started)
 
 (defn stop!
@@ -320,17 +323,17 @@
 
 (defn db
   "MongoDB for a particular HTTP URL"
-  [url]
+  [clock url]
   (reify db/DB
     (setup! [_ test node]
       (util/timeout 300000
                     (throw (RuntimeException.
                              (str "Mongo setup on " node " timed out!")))
                     (debian/install [:libc++1 :libsnmp30])
-                    (nt/install!)
+                    (mt/init! clock)
                     (install! node url)
                     (configure! test node)
-                    (start! test node)
+                    (start! clock test node)
                     (join! test node)))
 
     (teardown! [_ test node]
@@ -376,8 +379,10 @@
 
 (defn kill-nem
   "A nemesis that kills/restarts Mongo on randomly selected nodes."
-  []
-  (nemesis/node-start-stopper random-nonempty-subset stop! start!))
+  [clock]
+  (nemesis/node-start-stopper random-nonempty-subset
+                              stop!
+                              (partial start! clock)))
 
 (defn pause-nem
   "A nemesis that pauses Mongo on randomly selected nodes."
@@ -386,10 +391,10 @@
 
 (defn clock-skew-nem
   "Skews clocks on a random subset of nodes by dt seconds."
-  [dt]
+  [clock dt]
   (reify client/Client
     (setup! [this test _]
-      (nt/reset-time! test)
+      (c/with-test-nodes test (mt/reset-time! clock))
       this)
 
     (invoke! [this test op]
@@ -397,13 +402,13 @@
              (case (:f op)
                :start (c/with-test-nodes test
                         (if (< (rand) 0.5)
-                          (do (nt/bump-time! (* 1000 dt))
+                          (do (mt/bump-time! clock (time/seconds dt))
                               dt)
                           0))
-               :stop (info c/*host* "clock reset:" (nt/reset-time! test)))))
+               :stop (info c/*host* "clock reset:" (mt/reset-time! clock)))))
 
     (teardown! [this test]
-      (nt/reset-time! test))))
+      (c/with-test-nodes test (mt/reset-time! clock)))))
 
 (defn nemesis-gen
   "Given a nemesis name, builds a generator that emits [:name-start,
@@ -445,11 +450,12 @@
 
   3. Heal the network and restart all nodes. p2 may have committed writes, but
   p1's higher optime will allow it to win the election."
-  ([] (primary-divergence-nemesis nil))
-  ([conns]
+  ([clock] (primary-divergence-nemesis clock nil))
+  ([clock conns]
   (reify client/Client
     (setup! [this test _]
       (primary-divergence-nemesis
+        clock
         (into {} (real-pmap (juxt identity await-conn) (:nodes test)))))
 
     (invoke! [this test op]
@@ -467,7 +473,7 @@
 
                                     (c/with-session node (get (:sessions test)
                                                               node)
-                                      (nt/bump-time! 120000))
+                                      (mt/bump-time! clock (time/minutes 2)))
                                     (info node "clock advanced")))
                                 conns))
           :kill (dorun
@@ -481,11 +487,11 @@
                                  (info node "mongod killed")))
                              conns))
 
-          :stop (do (nt/reset-time! test)
+          :stop (do (c/with-test-nodes test (mt/reset-time! clock))
                     (info "Clocks reset")
                     (net/heal! (:net test) test)
                     (info "Network healed")
-                    (c/on-nodes test start!)
+                    (c/on-nodes test (partial start! clock))
                     (info "Nodes restarted")))))
 
     (teardown! [this test]
@@ -515,8 +521,8 @@
            :name            (str "mongodb " name " s:" (:storage-engine opts)
                                  " p:" (:protocol-version opts))
            :os              debian/os
-           :db              (db (:tarball opts))
-           :nemesis         (primary-divergence-nemesis)
+           :db              (db (:clock opts) (:tarball opts))
+           :nemesis         (primary-divergence-nemesis (:clock opts))
            :generator       (gen/phases
                               (->> (:generator opts)
                                    (gen/nemesis (primary-divergence-gen))
@@ -528,4 +534,5 @@
                                 (:final-generator opts))))
     (dissoc opts
             :generator
-            :final-generator)))
+            :final-generator
+            :clock)))
