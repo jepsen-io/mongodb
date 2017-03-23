@@ -7,15 +7,31 @@
             [clojure.tools.logging :refer :all]
             [clojure.string :as str]
             [jepsen.mongodb [core :as m]
+                            [document-cas :as dc]
+                            [faketime :as faketime]
                             [mongo :as client]
                             [set :as set]
-                            [document-cas :as dc]]
+                            [time :as mt]]
             [jepsen [cli :as jc]
                     [core :as jepsen]]))
 
 (def test-names
   {"set" set/test
    "register" dc/test})
+
+(def clock-skew-mechs
+  {"none" mt/noop-clock
+   "systemtime" mt/system-clock
+   "faketime" faketime/clock})
+
+(defn create-clock
+  [parsed]
+  (let [{:keys [clock-skew libfaketime-path]} (:options parsed)]
+    (assoc parsed :options
+           (-> :options parsed
+               (assoc :clock ((:clock-skew (:options parsed))
+                              {:libfaketime-path libfaketime-path}))
+               (dissoc :clock-skew :libfaketime-path)))))
 
 (def opt-spec
   "Command line option specification for tools.cli."
@@ -49,9 +65,19 @@
     :validate [(complement neg?) "Must be non-negative"]]
 
    ["-t" "--test TEST-NAME" "Test to run"
-    :default  set/test
-    :parse-fn test-names
-    :validate [identity (jc/one-of test-names)]]])
+    :default      set/test
+    :default-desc "set"
+    :parse-fn     test-names
+    :validate     [identity (jc/one-of test-names)]]
+
+   ["-c" "--clock-skew MECH" "Mechanism for performing clock skew"
+    :default      mt/system-clock
+    :default-desc "systemtime"
+    :parse-fn     clock-skew-mechs
+    :validate     [identity (jc/one-of clock-skew-mechs)]]
+
+   [nil "--libfaketime-path PATH" "Path to the libfaketime shared object to LD_PRELOAD"
+    :default "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1"]])
 
 (defn -main
   [& args]
@@ -59,6 +85,7 @@
     (merge (jc/serve-cmd)
            (jc/single-test-cmd
              {:opt-spec opt-spec
+              :opt-fn create-clock
               :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.4.0-rc3.tgz"
               :test-fn (fn [opts] ((:test opts) (dissoc opts :test)))}))
     args))
