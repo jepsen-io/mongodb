@@ -87,11 +87,17 @@
   [clock test node]
   (c/sudo username
           (apply cu/start-daemon!
-                 {:logfile "/opt/mongodb/stdout.log"
+                 {:chdir "/opt/mongodb"
+                  :background? false
+                  :logfile "/opt/mongodb/stdout.log"
+                  :make-pidfile? false
+                  :match-executable? false
+                  :match-process-name? true
                   :pidfile "/opt/mongodb/pidfile"
-                  :remove-pidfile? false
-                  :chdir   "/opt/mongodb"}
+                  :process-name "mongod"}
                  (conj (mt/wrap! clock "/opt/mongodb/bin/mongod")
+                       :--fork
+                       :--pidfilepath "/opt/mongodb/pidfile"
                        :--config "/opt/mongodb/mongod.conf")))
   :started)
 
