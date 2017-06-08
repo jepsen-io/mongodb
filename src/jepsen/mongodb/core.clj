@@ -101,8 +101,24 @@
                        :--config "/opt/mongodb/mongod.conf")))
   :started)
 
+(defn stop-daemon!
+  "Sends a daemon process identified by its pidfile a SIGTERM and waits until
+  the process exits."
+  [pidfile]
+  (info "stopping" pidfile)
+  (c/exec :start-stop-daemon :--stop
+          :--pidfile  pidfile
+          :--retry    "TERM/forever/0"
+          :--oknodo))
+
 (defn stop!
   "Stops Mongod"
+  [test node]
+  (c/sudo username (stop-daemon! "/opt/mongodb/pidfile"))
+  :stopped)
+
+(defn kill!
+  "Kills Mongod"
   [test node]
   (cu/stop-daemon! "mongod" "/opt/mongodb/pidfile")
   (meh (c/su (c/exec :killall :-9 "mongod")))
@@ -330,25 +346,33 @@
 (defn db
   "MongoDB for a particular HTTP URL"
   [clock url]
-  (reify db/DB
-    (setup! [_ test node]
-      (util/timeout 300000
-                    (throw (RuntimeException.
-                             (str "Mongo setup on " node " timed out!")))
-                    (debian/install [:libc++1 :libsnmp30])
-                    (mt/init! clock)
-                    (install! node url)
-                    (configure! test node)
-                    (start! clock test node)
-                    (join! test node)))
+  (let [setup-called (atom false)]
+    (reify db/DB
+      (setup! [_ test node]
+        (swap! setup-called (constantly true))
+        (util/timeout 300000
+                      (throw (RuntimeException.
+                               (str "Mongo setup on " node " timed out!")))
+                      (debian/install [:libc++1 :libsnmp30])
+                      (mt/init! clock)
+                      (install! node url)
+                      (configure! test node)
+                      (start! clock test node)
+                      (join! test node)))
 
-    (teardown! [_ test node]
-      (wipe! test node))
+      (teardown! [_ test node]
+        ; We detect when jepsen.db/cycle! is being called in jepsen.core/run! as
+        ; a case when db/teardown! is called while db/setup! has yet to be
+        ; called. We forcibly terminate any mongod processes that may be running
+        ; in order to prevent hangs from an earlier execution from causing
+        ; additional failures.
+        (when (not @setup-called) (kill! test node))
+        (wipe! test node))
 
-    db/LogFiles
-    (log-files [_ test node]
-      ["/opt/mongodb/stdout.log"
-       "/opt/mongodb/mongod.log"])))
+      db/LogFiles
+      (log-files [_ test node]
+        ["/opt/mongodb/stdout.log"
+         "/opt/mongodb/mongod.log"]))))
 
 (defmacro with-errors
   "Takes an invocation operation, a set of idempotent operation functions which
@@ -387,7 +411,7 @@
   "A nemesis that kills/restarts Mongo on randomly selected nodes."
   [clock]
   (nemesis/node-start-stopper random-nonempty-subset
-                              stop!
+                              kill!
                               (partial start! clock)))
 
 (defn pause-nem
