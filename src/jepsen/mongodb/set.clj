@@ -65,7 +65,7 @@
                           ; reads
                           (gen/limit 2 {:type :invoke, :f :read, :value nil}))
        :checker (checker/compose
-                  {:set      checker/set
+                  {:set      (checker/set)
                    :timeline (timeline/html)
                    :perf     (checker/perf)})}
       opts)))
