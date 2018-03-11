@@ -132,7 +132,7 @@
                                (gen/stagger 1))
             :model        (model/cas-register)
             :checker      (checker/compose
-                            {:linear  (independent/checker checker/linearizable)
+                            {:linear  (independent/checker (checker/linearizable))
                              :timeline (independent/checker (timeline/html))
                              :perf     (checker/perf)})}
            opts)))

@@ -498,7 +498,7 @@
                                     (info node "believes itself a primary")
                                     (->> (nemesis/split-one node (:nodes test))
                                          nemesis/complete-grudge
-                                         (nemesis/partition! test))
+                                         (net/drop-all! test))
                                     (info node "isolated")
 
                                     (c/with-session node (get (:sessions test)
