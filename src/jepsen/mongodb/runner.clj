@@ -2,7 +2,8 @@
   "Runs the full Mongo test suite, including a config file. Provides exit
   status reporting."
   (:gen-class)
-  (:require [clojure.pprint :refer [pprint]]
+  (:require [clojure.java.io :as io]
+            [clojure.pprint :refer [pprint]]
             [clojure.tools.cli :as cli]
             [clojure.tools.logging :refer :all]
             [clojure.string :as str]
@@ -10,30 +11,78 @@
                             [document-cas :as dc]
                             [faketime :as faketime]
                             [mongo :as client]
+                            [net :as mnet]
                             [set :as set]
                             [time :as mt]]
             [jepsen [cli :as jc]
-                    [core :as jepsen]]))
+                    [core :as jepsen]
+                    [net :as net]
+                    [os :as os]]
+            [jepsen.os.debian :as debian]))
 
-(def test-names
+(def ^:private test-names
   {"set" set/test
    "register" dc/test})
 
-(def clock-skew-mechs
+(def ^:private clock-skew-mechs
   {"none" mt/noop-clock
    "systemtime" mt/system-clock
    "faketime" faketime/clock})
 
-(defn create-clock
+(def ^:private virt-mechs #{:none :lxc :vm})
+
+(def ^:private virt-mech->clock-skew-mech
+  {:none faketime/clock, :lxc faketime/clock, :vm mt/system-clock})
+
+(def ^:private virt-mech->net-mech
+  {:none mnet/mongobridge, :lxc net/iptables, :vm net/iptables})
+
+(def ^:private virt-mech->os
+  {:none os/noop, :lxc debian/os, :vm debian/os})
+
+(defn- bridge->node+dest
+  [offset node]
+  (let [addr (client/server-address node)
+        port (.getPort addr)]
+    [node (str (client/server-address (.getHost addr) (+ port offset)))]))
+
+(defn- process-opts
   [parsed]
-  (let [{:keys [clock-skew libfaketime-path]} (:options parsed)]
+  (let [{:keys [clock-skew
+                libfaketime-path
+                mongobridge-offset
+                nodes
+                ssh
+                virtualization]}
+        (:options parsed)]
     (assoc parsed :options
            (-> :options parsed
-               (assoc :clock ((:clock-skew (:options parsed))
-                              {:libfaketime-path libfaketime-path}))
-               (dissoc :clock-skew :libfaketime-path)))))
+               (assoc :bridge (into {} (map (partial bridge->node+dest
+                                                     mongobridge-offset))
+                                       nodes)
+                      :clock ((or clock-skew
+                                  (get virt-mech->clock-skew-mech
+                                       virtualization))
+                              {:libfaketime-path libfaketime-path})
+                      :net (get virt-mech->net-mech virtualization)
+                      :os (get virt-mech->os virtualization)
+                      :username "mongodb"
+                      :virt virtualization)
+               (cond->
+                 (= :none virtualization) (assoc :ssh (assoc ssh :dummy? true))
+                 ; Aside from sharing the same system clock, LXC containers
+                 ; provide equivalent virtualization for our purposes (e.g. pid
+                 ; namespaces, network namespaces) to that of virtual machine,
+                 ; We therefore change to the :virt key to be :vm as a way to
+                 ; avoid identical defmethods in other parts of our
+                 ; cluster-management code.
+                 (= :lxc virtualization) (assoc :virt :vm))
+               (dissoc :clock-skew
+                       :libfaketime-path
+                       :mongobridge-offset
+                       :virtualization)))))
 
-(def opt-spec
+(def ^:private opt-spec
   "Command line option specification for tools.cli."
   [[nil "--key-time-limit SECONDS"
     "How long should we test an individual key for, in seconds?"
@@ -70,14 +119,39 @@
     :parse-fn     test-names
     :validate     [identity (jc/one-of test-names)]]
 
+   [nil "--working-dir DIR" "Directory for where to write MongoDB-related files"
+    :default  "/opt/mongodb"
+    :validate [#(.isAbsolute (io/file %)) "Must be an absolute path"]]
+
+   [nil "--mongodb-dir DIR"
+    (str "Directory to an existing checkout of the mongodb/mongo repository"
+         " with binaries installed in the root directory. This option takes"
+         " precedence over the --tarball option as the source of the MongoDB"
+         " binaries to use.")
+    :validate [#(.isDirectory (io/file %)) "Must be a directory"]]
+
+   ["-z" "--virtualization MECH"
+    "Mechanism for providing filesystem and network isolation"
+    :default  :vm
+    :parse-fn keyword
+    :validate [(partial contains? virt-mechs) (jc/one-of virt-mechs)]]
+
    ["-c" "--clock-skew MECH" "Mechanism for performing clock skew"
-    :default      mt/system-clock
-    :default-desc "systemtime"
+    :default      nil
+    :default-desc "systemtime if :vm and faketime otherwise"
     :parse-fn     clock-skew-mechs
     :validate     [identity (jc/one-of clock-skew-mechs)]]
 
-   [nil "--libfaketime-path PATH" "Path to the libfaketime shared object to LD_PRELOAD"
-    :default "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1"]])
+   [nil "--libfaketime-path PATH"
+    "Path to the libfaketime shared object to LD_PRELOAD"
+    :default "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1"
+    :validate [#(.isAbsolute (io/file %)) "Must be an absolute path"]]
+
+   [nil "--mongobridge-offset INT"
+    "Number of port values to stagger mongod processes ahead of mongobridge processes"
+    :default  100
+    :parse-fn #(Long/parseLong %)
+    :validate [identity "Must be a number"]]])
 
 (defn -main
   [& args]
@@ -85,7 +159,7 @@
     (merge (jc/serve-cmd)
            (jc/single-test-cmd
              {:opt-spec opt-spec
-              :opt-fn create-clock
+              :opt-fn process-opts
               :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.4.0-rc3.tgz"
               :test-fn (fn [opts] ((:test opts) (dissoc opts :test)))}))
     args))

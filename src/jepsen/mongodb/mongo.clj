@@ -36,6 +36,13 @@
       (.connectTimeout           60000)
       (.socketTimeout            30000))))
 
+(defn server-address
+  ([node]
+   (ServerAddress. (name node)))
+
+  ([node port]
+   (ServerAddress. (name node) port)))
+
 (defn client
   "Creates a new Mongo client."
   [node]
@@ -44,7 +51,7 @@
 (defn cluster-client
   "Returns a mongoDB connection for all nodes in a test."
   [test]
-  (MongoClient. (->> test :nodes (map #(ServerAddress. (name %))))
+  (MongoClient. (->> test :nodes (map server-address))
                 (default-client-options)))
 
 (defn ^MongoDatabase db

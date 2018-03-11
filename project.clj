@@ -1,11 +1,11 @@
-(defproject jepsen.mongodb "0.2.1-SNAPSHOT"
+(defproject jepsen.mongodb "0.2.2-SNAPSHOT"
   :description "Jepsen MongoDB tests"
   :url "https://github.com/jepsen-io/mongodb"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [org.clojure/tools.cli "0.3.5"]
-                 [jepsen "0.1.6-SNAPSHOT"]
+                 [jepsen "0.1.8"]
                  [org.mongodb/mongodb-driver "3.4.2"]]
   :jvm-opts ["-Xmx16g"
              "-Xms16g"

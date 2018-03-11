@@ -27,121 +27,16 @@
             [jepsen.nemesis.time :as nt]
             [jepsen.control [util :as cu]]
             [jepsen.os.debian :as debian]
-            [jepsen.mongodb.time :as mt]
+            [jepsen.mongodb.cluster :as mc]
+            [jepsen.mongodb.control :as mcontrol]
+            [jepsen.mongodb.dbutil :as mdbutil]
             [jepsen.mongodb.mongo :as m]
+            [jepsen.mongodb.net :as mnet]
+            [jepsen.mongodb.time :as mt]
+            [jepsen.mongodb.util :as mu]
             [knossos [core :as knossos]
                      [model :as model]])
   (:import (clojure.lang ExceptionInfo)))
-
-(def username "mongodb")
-
-(defn install!
-  "Installs a tarball from an HTTP URL"
-  [node url]
-  ; Add user
-  (cu/ensure-user! username)
-
-  ; Download tarball
-  (c/su
-    (let [local-file (nth (re-find #"file://(.+)" url) 1)
-          file       (or local-file (c/cd "/tmp" (str "/tmp/" (cu/wget! url))))]
-      (try
-        (c/cd "/opt"
-              ; Clean up old dir
-              (c/exec :rm :-rf "mongodb")
-              ; Create mongodb & data dir
-              (c/exec :mkdir :-p "mongodb/data")
-              ; Extract to mongodb
-              (c/exec :tar :xvf file :-C "mongodb" :--strip-components=1)
-              ; Permissions
-              (c/exec :chown :-R (str username ":" username) "mongodb"))
-        (catch RuntimeException e
-          (condp re-find (.getMessage e)
-            #"tar: Unexpected EOF"
-            (if local-file
-              ; Nothing we can do to recover here
-              (throw (RuntimeException.
-                       (str "Local tarball " local-file " on node " (name node)
-                            " is corrupt: unexpected EOF.")))
-              (do (info "Retrying corrupt tarball download")
-                  (c/exec :rm :-rf file)
-                  (install! node url)))
-
-            ; Throw by default
-            (throw e)))))))
-
-(defn configure!
-  "Deploy configuration files to the node."
-  [test node]
-  (c/sudo username
-          (c/exec :echo (-> "mongod.conf" io/resource slurp
-                            (str/replace #"%STORAGE_ENGINE%"
-                                         (:storage-engine test))
-                            (str/replace #"%ENABLE_MAJORITY_READ_CONCERN%"
-                                         (str (= (:read-concern test)
-                                                 :majority))))
-                  :> "/opt/mongodb/mongod.conf")))
-
-(defn start!
-  "Starts Mongod"
-  [clock test node]
-  (c/sudo username
-          (apply cu/start-daemon!
-                 {:chdir "/opt/mongodb"
-                  :background? false
-                  :logfile "/opt/mongodb/stdout.log"
-                  :make-pidfile? false
-                  :match-executable? false
-                  :match-process-name? true
-                  :pidfile "/opt/mongodb/pidfile"
-                  :process-name "mongod"}
-                 (conj (mt/wrap! clock "/opt/mongodb/bin/mongod")
-                       :--fork
-                       :--pidfilepath "/opt/mongodb/pidfile"
-                       :--config "/opt/mongodb/mongod.conf")))
-  :started)
-
-(defn stop-daemon!
-  "Sends a daemon process identified by its pidfile a SIGTERM and waits until
-  the process exits."
-  [pidfile]
-  (info "stopping" pidfile)
-  (c/exec :start-stop-daemon :--stop
-          :--pidfile  pidfile
-          :--retry    "TERM/forever/0"
-          :--oknodo))
-
-(defn stop!
-  "Stops Mongod"
-  [test node]
-  (c/sudo username (stop-daemon! "/opt/mongodb/pidfile"))
-  :stopped)
-
-(defn kill!
-  "Kills Mongod"
-  [test node]
-  (cu/stop-daemon! "mongod" "/opt/mongodb/pidfile")
-  (meh (c/su (c/exec :killall :-9 "mongod")))
-  :stopped)
-
-(defn savelog!
-  "Saves Mongod log"
-  [node]
-  (info node "copying mongod.log & stdout.log file to /root/")
-  (c/su
-    (meh (c/exec :cp :-f
-                 "/opt/mongodb/mongod.log"
-                 "/opt/mongodb/stdout.log"
-                 "/root/"))))
-
-(defn wipe!
-  "Shuts down MongoDB and wipes data."
-  [test node]
-  (stop! test node)
-  (savelog! node)
-  (info node "deleting data files")
-  (c/su
-    (c/exec :rm :-rf (c/lit "/opt/mongodb/*.log"))))
 
 (defn mongo!
   "Run a Mongo shell command. Spits back an unparsable kinda-json string,
@@ -194,12 +89,6 @@
   [conn conf]
   (m/admin-command! conn :replSetReconfig conf))
 
-(defn node+port->node
-  "Take a mongo \"n1:27107\" string and return just the node as a string:
-  :n1."
-  [s]
-  ((re-find #"(.+):\d+" s) 1))
-
 (defn primaries
   "What nodes does this conn think are primaries?"
   [conn]
@@ -207,7 +96,7 @@
        :members
        (filter #(= "PRIMARY" (:stateStr %)))
        (map :name)
-       (map node+port->node)))
+       (map m/server-address)))
 
 (defn primary
   "Which single node does this conn think the primary is? Throws for multiple
@@ -262,11 +151,11 @@
   "Block until all nodes in the test are known to this connection's replset
   status"
   [test conn]
-  (while (try (not= (set (map name (:nodes test)))
+  (while (try (not= (set (map m/server-address (:nodes test)))
                     (->> (replica-set-status conn)
                          :members
                          (map :name)
-                         (map node+port->node)
+                         (map m/server-address)
                          set))
               (catch ExceptionInfo e
                 (if (re-find #"should come online shortly"
@@ -276,7 +165,8 @@
     (info :replica-set-status (with-out-str (->> (replica-set-status conn)
                                                  :members
                                                  (map :name)
-                                                 (map node+port->node)
+                                                 (map m/server-address)
+                                                 (map str)
                                                  pprint)))
     (Thread/sleep 1000)))
 
@@ -294,7 +184,7 @@
                  (map-indexed (fn [i node]
                                 {:_id  i
                                  :priority (- (count (:nodes test)) i)
-                                 :host (str (name node) ":27017")})))})
+                                 :host (str (m/server-address node))})))})
 
 (defn join!
   "Join nodes into a replica set. Blocks until any primary is visible to all
@@ -340,24 +230,44 @@
     (info node "waiting for primary")
     (await-primary conn)
 
-    (info node "primary is" (primary conn))
+    (info node "primary is" (str (primary conn)))
     (jepsen/synchronize test)))
 
 (defn db
   "MongoDB for a particular HTTP URL"
   [clock url]
-  (let [setup-called (atom false)]
+  (let [state (atom {})]
+    ; We intentionally do not implement the jepsen.db/LogFiles protocol in order
+    ; to avoid the jepsen.core/snarf-logs! function from being called when an
+    ; exception occurs or when `db` is being torn down. The
+    ; jepsen.core/snarf-logs! function uses the jepsen.control/download
+    ; function, which requires the use of an SSH connection and is therefore
+    ; incompatible with the concept of running without any virtualization. The
+    ; teardown! method is instead responsible for downloading/copying the logs
+    ; to the store/ directory.
     (reify db/DB
       (setup! [_ test node]
-        (swap! setup-called (constantly true))
+        (swap! state assoc node {:setup-called true})
         (util/timeout 300000
                       (throw (RuntimeException.
                                (str "Mongo setup on " node " timed out!")))
-                      (debian/install [:libc++1 :libsnmp30])
-                      (mt/init! clock)
-                      (install! node url)
-                      (configure! test node)
-                      (start! clock test node)
+                      (when (= :vm (:virt test))
+                        (debian/install [:libc++1 :libsnmp30]))
+
+                      ; The jepsen.mongodb.dbutil/install! function creates the
+                      ; subdirectories that the jepsen.mongodb.time/init!
+                      ; function and the jepsen.mongodb.cluster/init! function
+                      ; attempt to create files in, so it must happen first.
+                      (->> (or (some->> (:mongodb-dir test)
+                                        io/file
+                                        .getCanonicalPath
+                                        (str "file://"))
+                               url)
+                           (mdbutil/install! test node))
+
+                      (mt/init! clock test)
+                      (mc/init! test node)
+                      (mc/start! clock test node)
                       (join! test node)))
 
       (teardown! [_ test node]
@@ -366,13 +276,19 @@
         ; called. We forcibly terminate any mongod processes that may be running
         ; in order to prevent hangs from an earlier execution from causing
         ; additional failures.
-        (when (not @setup-called) (kill! test node))
-        (wipe! test node))
-
-      db/LogFiles
-      (log-files [_ test node]
-        ["/opt/mongodb/stdout.log"
-         "/opt/mongodb/mongod.log"]))))
+        (if-not (:setup-called (get @state node))
+          (mc/kill! test node)
+          ; We call the snarf-logs! function before stopping the node to match
+          ; the behavior of how jepsen.core/snarf-logs! is called before
+          ; jepsen.db/teardown! is called. This is useful for gathering at least
+          ; partial logs if mongod is going to hang during clean shutdown.
+          (do (mdbutil/snarf-logs! test node)
+              (try
+                (mc/stop! test node)
+                ; We call the snarf-logs! function after stopping the node to
+                ; ensure the shutdown messages from mongod are included in the
+                ; downloaded logs.
+                (finally (mdbutil/snarf-logs! test node)))))))))
 
 (defmacro with-errors
   "Takes an invocation operation, a set of idempotent operation functions which
@@ -411,8 +327,8 @@
   "A nemesis that kills/restarts Mongo on randomly selected nodes."
   [clock]
   (nemesis/node-start-stopper random-nonempty-subset
-                              kill!
-                              (partial start! clock)))
+                              mc/kill!
+                              (partial mc/start! clock)))
 
 (defn pause-nem
   "A nemesis that pauses Mongo on randomly selected nodes."
@@ -424,7 +340,7 @@
   [clock dt]
   (reify client/Client
     (setup! [this test _]
-      (c/with-test-nodes test (mt/reset-time! clock))
+      (c/with-test-nodes test (mt/reset-time! clock test))
       this)
 
     (invoke! [this test op]
@@ -432,13 +348,13 @@
              (case (:f op)
                :start (c/with-test-nodes test
                         (if (< (rand) 0.5)
-                          (do (mt/bump-time! clock (time/seconds dt))
+                          (do (mt/bump-time! clock test (time/seconds dt))
                               dt)
                           0))
-               :stop (info c/*host* "clock reset:" (mt/reset-time! clock)))))
+               :stop (info c/*host* "clock reset:" (mt/reset-time! clock test)))))
 
     (teardown! [this test]
-      (c/with-test-nodes test (mt/reset-time! clock)))))
+      (c/with-test-nodes test (mt/reset-time! clock test)))))
 
 (defn nemesis-gen
   "Given a nemesis name, builds a generator that emits [:name-start,
@@ -492,36 +408,34 @@
       (assoc
         op :value
         (case (:f op)
-          :isolate (dorun
+          :isolate (->> conns
+                        (real-pmap (fn [[node conn]]
+                          (when (= (m/server-address node) (primary conn))
+                            (info node "believes itself a primary")
+                            (->> (nemesis/split-one node (:nodes test))
+                                 nemesis/complete-grudge
+                                 (net/drop-all! test))
+                            (info node "isolated")
+
+                            (c/with-session node (get (:sessions test) node)
+                              (mt/bump-time! clock test (time/minutes 2)))
+                            (info node "clock advanced"))))
+                        dorun)
+
+          :kill (->> conns
                      (real-pmap (fn [[node conn]]
-                                  (when (= (name node) (primary conn))
-                                    (info node "believes itself a primary")
-                                    (->> (nemesis/split-one node (:nodes test))
-                                         nemesis/complete-grudge
-                                         (nemesis/partition! test))
-                                    (info node "isolated")
+                       (when (= (m/server-address node) (primary conn))
+                         (info node "believes itself a primary")
+                         (c/with-session node (get (:sessions test) node)
+                           (mc/kill! test node))
+                         (info node "mongod killed"))))
+                     dorun)
 
-                                    (c/with-session node (get (:sessions test)
-                                                              node)
-                                      (mt/bump-time! clock (time/minutes 2)))
-                                    (info node "clock advanced")))
-                                conns))
-          :kill (dorun
-                  (real-pmap (fn [[node conn]]
-                               (when (= (name node) (primary conn))
-                                 (info node "believes itself a primary")
-
-                                 (c/with-session node (get (:sessions test)
-                                                           node)
-                                   (meh (c/su (c/exec :killall :-9 "mongod"))))
-                                 (info node "mongod killed")))
-                             conns))
-
-          :stop (do (c/with-test-nodes test (mt/reset-time! clock))
+          :stop (do (c/with-test-nodes test (mt/reset-time! clock test))
                     (info "Clocks reset")
                     (net/heal! (:net test) test)
                     (info "Network healed")
-                    (c/on-nodes test (partial start! clock))
+                    (c/on-nodes test (partial mc/start! clock))
                     (info "Nodes restarted")))))
 
     (teardown! [this test]
