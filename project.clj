@@ -1,4 +1,4 @@
-(defproject jepsen.mongodb "0.2.2"
+(defproject jepsen.mongodb "0.2.3-SNAPSHOT"
   :description "Jepsen MongoDB tests"
   :url "https://github.com/jepsen-io/mongodb"
   :license {:name "Eclipse Public License"
