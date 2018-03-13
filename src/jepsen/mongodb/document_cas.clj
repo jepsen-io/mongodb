@@ -103,7 +103,7 @@
 
 (defn test
   "Document-level compare and set. Options are also passed through to
-  core/test-.
+  core/mongodb-test.
 
   Special options:
 
@@ -113,26 +113,27 @@
     :time-limit                 How long do we run the test for?
     :key-time-limit             How long do we test an individual key?"
   [opts]
-  (test- (str "doc cas"
-              " r:" (name (:read-concern opts))
-              " w:" (name (:write-concern opts)))
-         (merge
-           {:client       (client opts)
-            :concurrency  100
-            :generator    (->> (independent/concurrent-generator
-                                 10
-                                 (range)
-                                 (fn [k]
-                                   (->> (gen/mix [w cas cas])
-                                        (gen/reserve 5 (if (:no-reads opts)
-                                                         (gen/mix [w cas cas])
-                                                         r))
-                                        (gen/time-limit
-                                          (:key-time-limit opts)))))
-                               (gen/stagger 1))
-            :model        (model/cas-register)
-            :checker      (checker/compose
-                            {:linear  (independent/checker (checker/linearizable))
-                             :timeline (independent/checker (timeline/html))
-                             :perf     (checker/perf)})}
-           opts)))
+  (mongodb-test
+    (str "doc cas"
+         " r:" (name (:read-concern opts))
+         " w:" (name (:write-concern opts)))
+    (merge
+      {:client        (client opts)
+       :concurrency   100
+       :generator     (->> (independent/concurrent-generator
+                             10
+                             (range)
+                             (fn [k]
+                               (->> (gen/mix [w cas cas])
+                                    (gen/reserve 5 (if (:no-reads opts)
+                                                     (gen/mix [w cas cas])
+                                                     r))
+                                    (gen/time-limit
+                                      (:key-time-limit opts)))))
+                           (gen/stagger 1))
+       :model         (model/cas-register)
+       :checker       (checker/compose
+                        {:linear  (independent/checker (checker/linearizable))
+                         :timeline (independent/checker (timeline/html))
+                         :perf     (checker/perf)})}
+      opts)))

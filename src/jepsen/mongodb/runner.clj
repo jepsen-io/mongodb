@@ -12,6 +12,7 @@
                             [faketime :as faketime]
                             [mongo :as client]
                             [net :as mnet]
+                            [read-concern-majority :as rcm]
                             [set :as set]
                             [time :as mt]]
             [jepsen [cli :as jc]
@@ -22,7 +23,8 @@
 
 (def ^:private test-names
   {"set" set/test
-   "register" dc/test})
+   "register" dc/test
+   "read-concern-majority" rcm/test})
 
 (def ^:private clock-skew-mechs
   {"none" mt/noop-clock

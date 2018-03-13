@@ -51,7 +51,7 @@
   "A set test, which inserts a sequence of integers into a collection, and
   performs a final read back."
   [opts]
-  (test-
+  (mongodb-test
     "set"
     (merge
       {:client (client opts)
