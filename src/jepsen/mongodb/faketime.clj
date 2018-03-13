@@ -78,6 +78,7 @@
 
       (wrap! [clock test bin]
         (conj ["/usr/bin/env"
+               "DONT_FAKE_MONOTONIC=1"
                "FAKETIME_NO_CACHE=1"
                (format "FAKETIME_TIMESTAMP_FILE=%s"
                        (faketime-timestamp-file test c/*host*))
