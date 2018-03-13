@@ -29,6 +29,7 @@
             [jepsen.os.debian :as debian]
             [jepsen.mongodb.cluster :as mc]
             [jepsen.mongodb.control :as mcontrol]
+            [jepsen.mongodb.dbhash :as dbhash]
             [jepsen.mongodb.dbutil :as mdbutil]
             [jepsen.mongodb.mongo :as m]
             [jepsen.mongodb.net :as mnet]
@@ -458,7 +459,13 @@
   :tarball            HTTP URL of a tarball to install
   :time-limit         How long do we run the test for?
   :storage-engine     Storage engine to use
-  :protocol-version   Replication protocol version"
+  :protocol-version   Replication protocol version
+
+  At the end of every test, we use the 'dbHash' command to verify data
+  consistency across each member of the replica set. We extend the nemesis to
+  handle the :compare-dbhashes operations because it is a client that is
+  straightforward to compose via the `jepsen.nemesis/compose` function. We also
+  extend the generator and checker accordingly."
   [name opts]
   (merge
     (assoc tests/noop-test
@@ -468,7 +475,13 @@
                                  "_protocolVersion-" (:protocol-version opts))
            :os              debian/os
            :db              (db (:clock opts) (:tarball opts))
-           :nemesis         (primary-divergence-nemesis (:clock opts))
+           :nemesis         (nemesis/compose
+                              ; We allow for dbhash checks by composing our
+                              ; standard "chaos" nemesis with a client that
+                              ; handles :compare-dbhashes ops.
+                              {#{:isolate :kill :stop}
+                               (primary-divergence-nemesis (:clock opts))
+                               #{:compare-dbhashes} dbhash/client})
            :generator       (gen/phases
                               (->> (:generator opts)
                                    (gen/nemesis (primary-divergence-gen))
@@ -476,9 +489,17 @@
                               (gen/nemesis
                                 (gen/once {:type :info, :f :stop, :value nil}))
                               (gen/sleep 40)
-                              (gen/clients
-                                (:final-generator opts))))
+                              (gen/clients (:final-generator opts))
+                              ; Generate the :compare-dbhashes op at the very
+                              ; end of the test.
+                              (gen/nemesis dbhash/gen))
+           :client            (:client opts)
+           :checker           (checker/compose
+                                {:base (:checker opts)
+                                 :dbhash dbhash/checker}))
     (dissoc opts
+            :checker
+            :client
             :generator
             :final-generator
             :clock)))

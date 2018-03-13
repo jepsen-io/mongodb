@@ -32,10 +32,12 @@
   ; Create the bin/ directory.
   (mcontrol/exec test :mkdir :-p (mu/path-prefix test node "/bin"))
 
-  ; Upload the mongod binary and potentially also the mongobridge binary, if we
-  ; aren't running with any virtualization.
+  ; Upload the mongod and mongo shell binaries. The mongobridge binary is also
+  ; uploaded if we aren't running with any virtualization.
   (->> (cond-> [[(str dir "/mongod")
-                 (mu/path-prefix test node "/bin/mongod")]]
+                 (mu/path-prefix test node "/bin/mongod")]
+                [(str dir "/mongo")
+                 (mu/path-prefix test node "/bin/mongo")]]
          (= :none (:virt test))
          (conj [(str dir "/mongobridge")
                 (mu/path-prefix test node "/bin/mongobridge")]))
