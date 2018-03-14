@@ -34,7 +34,7 @@
                    client
                    coll]
   client/Client
-  (setup! [this test node]
+  (open! [this test node]
     (let [client (m/client node)
           coll   (-> client
                      (m/db db-name)
@@ -77,8 +77,11 @@
                      true (assoc op :type :info
                                  :error (str "CAS: matched too many docs! "
                                              res))))))))
-  (teardown! [_ test]
-    (.close ^java.io.Closeable client)))
+  (close! [_ test]
+    (.close ^java.io.Closeable client))
+
+  (setup! [_ _])
+  (teardown! [_ _]))
 
 (defn client
   "A client which implements a register on top of an entire document.

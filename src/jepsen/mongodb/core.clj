@@ -339,8 +339,8 @@
 (defn clock-skew-nem
   "Skews clocks on a random subset of nodes by dt seconds."
   [clock dt]
-  (reify client/Client
-    (setup! [this test _]
+  (reify nemesis/Nemesis
+    (setup! [this test]
       (c/with-test-nodes test (mt/reset-time! clock test))
       this)
 
@@ -399,8 +399,8 @@
   p1's higher optime will allow it to win the election."
   ([clock] (primary-divergence-nemesis clock nil))
   ([clock conns]
-  (reify client/Client
-    (setup! [this test _]
+  (reify nemesis/Nemesis
+    (setup! [this test]
       (primary-divergence-nemesis
         clock
         (into {} (real-pmap (juxt identity await-conn) (:nodes test)))))

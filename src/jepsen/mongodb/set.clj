@@ -15,7 +15,7 @@
 
 (defrecord Client [db-name coll-name read-concern write-concern client coll]
   client/Client
-  (setup! [this test node]
+  (open! [this test node]
     (let [client (m/client node)
           coll  (-> client
                     (m/db db-name)
@@ -36,8 +36,11 @@
                                  (map :value)
                                  (into (sorted-set)))))))
 
-  (teardown! [this test]
-    (.close ^java.io.Closeable client)))
+  (close! [this test]
+    (.close ^java.io.Closeable client))
+
+  (setup! [_ _])
+  (teardown! [_ _]))
 
 (defn client
   "A set test client"

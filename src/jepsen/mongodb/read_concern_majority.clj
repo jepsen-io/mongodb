@@ -54,7 +54,7 @@
 
 (defrecord Client [db-name coll-name read-concern write-concern client coll]
   client/Client
-  (setup! [this test node]
+  (open! [this test node]
     ; Initiate a single client connection to a MongoDB database collection so we
     ; can use it for invoking test operations.
     (let [client (m/client node)
@@ -85,8 +85,11 @@
                                  (map :value)
                                  (into (sorted-set)))))))
 
-  (teardown! [this test]
-    (.close ^java.io.Closeable client)))
+  (close! [this test]
+    (.close ^java.io.Closeable client))
+
+  (setup! [_ _])
+  (teardown! [_ _]))
 
 (defn subset-chain?
   "Determine if a sequence of sets form an ordered chain of subsets.
