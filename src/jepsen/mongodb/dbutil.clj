@@ -86,13 +86,21 @@
   "Installs the MongoDB binaries into the node's directory from a local
   directory, a local tarball, or a remote tarball."
   [test node url]
-  ; Clean up the node's directory from a prior execution of the test.
+  ;; Clean up the node's directory from a prior execution of the test.
   (mcontrol/exec test :rm :-rf (mu/path-prefix test node))
 
-  ; Create the data/ directory.
+  ;; Create the data/ directory.
   (mcontrol/exec test :mkdir :-p (mu/path-prefix test node "/data"))
 
-  ; Install the MongoDB binaries into the node's directory.
+  ;; Create the configsvr-data/ directories for sharded tests.
+  (when (< 0 (:shard-count test))
+    (mcontrol/exec test :mkdir :-p (mu/path-prefix test node "/configsvr-data")))
+
+  ;; Create data directories for each shard. If `shard-count` is zero, this does not spawn anything.
+  (doseq [idx (range 0 (:shard-count test))]
+    (mu/maybe-su test (mcontrol/exec test :mkdir :-p (mu/path-prefix test node (str "/data" idx)))))
+
+  ;; Install the MongoDB binaries into the node's directory.
   (if-let [path (nth (re-find #"file://(.+)" url) 1)]
     (if (.isDirectory (io/file path))
       (install-local-directory! test node path)
@@ -114,7 +122,7 @@
   ; owns its contents unless we are running with out any virtualization.
   (when (= :vm (:virt test))
     (c/exec :chown :-R (str (:username test) ":" (:username test))
-                       (mu/path-prefix test node))))
+            (mu/path-prefix test node))))
 
 (defn- log-files
   [test node]

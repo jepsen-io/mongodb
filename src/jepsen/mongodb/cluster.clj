@@ -13,7 +13,7 @@
 ;; Jepsen version 0.1.8 with the `exec` function calls replaced with
 ;; `mcontrol/exec` function calls to account for the possibility of running
 ;; without any virtualization.
-(defn- start-daemon!
+(defn start-daemon!
   "Starts a daemon process, logging stdout and stderr to the given file.
   Invokes `bin` with `args`. Options are:
 
