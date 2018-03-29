@@ -45,8 +45,8 @@
 
 (defn client
   "Creates a new Mongo client."
-  [node]
-  (MongoClient. (name node) (default-client-options)))
+  ([node]      (MongoClient. (server-address node) (default-client-options)))
+  ([node port] (MongoClient. (server-address node port) (default-client-options))))
 
 (defn cluster-client
   "Returns a mongoDB connection for all nodes in a test."

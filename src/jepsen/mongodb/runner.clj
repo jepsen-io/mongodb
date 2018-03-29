@@ -14,7 +14,8 @@
                             [net :as mnet]
                             [read-concern-majority :as rcm]
                             [set :as set]
-                            [time :as mt]]
+                            [time :as mt]
+                            [sharded :as sharded]]
             [jepsen [cli :as jc]
                     [core :as jepsen]
                     [net :as net]
@@ -24,7 +25,8 @@
 (def ^:private test-names
   {"set" set/test
    "register" dc/test
-   "read-concern-majority" rcm/test})
+   "read-concern-majority" rcm/test
+   "sharded-set" sharded/test})
 
 (def ^:private clock-skew-mechs
   {"none" mt/noop-clock
@@ -152,6 +154,23 @@
    [nil "--mongobridge-offset INT"
     "Number of port values to stagger mongod processes ahead of mongobridge processes"
     :default  100
+    :parse-fn #(Long/parseLong %)
+    :validate [identity "Must be a number"]]
+
+   [nil "--shard-count INT"
+    "Number of shards"
+    :default 1
+    :parse-fn #(Long/parseLong %)
+    :validate [identity "Must be a number"]]
+
+   [nil "--chunk-size INT"
+    "Size of shard chunks in INT MB."
+    :default 64
+    :parse-fn #(Long/parseLong %)
+    :validate [identity "Must be a number"]]
+
+   [nil "--mongos-count INT"
+    "Number of mongos processes to run, max one per node"
     :parse-fn #(Long/parseLong %)
     :validate [identity "Must be a number"]]])
 

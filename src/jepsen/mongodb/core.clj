@@ -114,33 +114,33 @@
     (first ps)))
 
 (defn await-conn
-  "Block until we can connect to the given node. Returns a connection to the
-  node."
-  [node]
-  (timeout (* 300 1000)
-           (throw (ex-info "Timed out trying to connect to MongoDB"
-                           {:node node}))
-           (loop []
-             (or (try
-                   (let [conn (m/client node)]
-                     (try
-                       (.first (.listDatabaseNames conn))
-                       conn
-                       ; Don't leak clients when they fail
-                       (catch Throwable t
-                         (.close conn)
-                         (throw t))))
-                   (catch com.mongodb.MongoTimeoutException e
-                     (info "Mongo timeout while waiting for conn; retrying. "
-                           (.getMessage e))
-                     nil)
-                   (catch com.mongodb.MongoSocketReadTimeoutException e
-                     (info "Mongo socket read timeout waiting for conn; retrying")
-                     nil))
-                 ; If we aren't ready, sleep and retry
-                 (do
-                   (Thread/sleep 1000)
-                   (recur))))))
+  "Block until we can connect to the given node and port. Returns a connection to the
+  process."
+  ([node] (await-conn node 27017))
+  ([node port] (timeout (* 300 1000)
+                        (throw (ex-info "Timed out trying to connect to MongoDB"
+                                        {:node node}))
+                        (loop []
+                          (or (try
+                                (let [conn (m/client node port)]
+                                  (try
+                                    (.first (.listDatabaseNames conn))
+                                    conn
+                                    ; Don't leak clients when they fail
+                                    (catch Throwable t
+                                      (.close conn)
+                                      (throw t))))
+                                (catch com.mongodb.MongoTimeoutException e
+                                  (info "Mongo timeout while waiting for conn; retrying. "
+                                        (.getMessage e))
+                                  nil)
+                                (catch com.mongodb.MongoSocketReadTimeoutException e
+                                  (info "Mongo socket read timeout waiting for conn; retrying")
+                                  nil))
+                              ; If we aren't ready, sleep and retry
+                              (do
+                                (Thread/sleep 1000)
+                                (recur))))) ))
 
 (defn await-primary
   "Block until a primary is known to the current node."
@@ -151,8 +151,8 @@
 (defn await-join
   "Block until all nodes in the test are known to this connection's replset
   status"
-  [test conn]
-  (while (try (not= (set (map m/server-address (:nodes test)))
+  [test conn port]
+  (while (try (not= (set (map #(m/server-address % port) (:nodes test)))
                     (->> (replica-set-status conn)
                          :members
                          (map :name)
@@ -173,9 +173,9 @@
 
 (defn target-replica-set-config
   "Generates the config for a replset in a given test."
-  [test]
+  [test port repl-set-name]
   (assert (integer? (:protocol-version test)))
-  {:_id "jepsen"
+  {:_id repl-set-name
    :protocolVersion (:protocol-version test)
    :settings {:heartbeatIntervalMillis 2500  ; protocol v1, ms
               :electionTimeoutMillis   5000 ; protocol v1, ms
@@ -185,54 +185,57 @@
                  (map-indexed (fn [i node]
                                 {:_id  i
                                  :priority (- (count (:nodes test)) i)
-                                 :host (str (m/server-address node))})))})
+                                 :host (str (m/server-address node port))})))})
 
 (defn join!
   "Join nodes into a replica set. Blocks until any primary is visible to all
   nodes which isn't really what we want but oh well."
-  [test node]
-  ; Gotta have all nodes online for this. Delightfully, Mongo won't actually
-  ; bind to the port until well *after* the init script startup process
-  ; returns. This would be fine, except that  if a node isn't ready to join,
-  ; the initiating node will just hang indefinitely, instead of figuring out
-  ; that the node came online a few seconds later.
-  (.close (await-conn node))
-  (jepsen/synchronize test)
+  [test node & opts]
+  (let [{:keys [port repl-set-name]} (first opts)
+        port (or port 27017)
+        repl-set-name (or repl-set-name "jepsen")]
+    ; Gotta have all nodes online for this. Delightfully, Mongo won't actually
+    ; bind to the port until well *after* the init script startup process
+    ; returns. This would be fine, except that  if a node isn't ready to join,
+    ; the initiating node will just hang indefinitely, instead of figuring out
+    ; that the node came online a few seconds later.
+    (.close (await-conn node port))
+    (jepsen/synchronize test)
 
-  ; Initiate RS
-  (when (= node (jepsen/primary test))
-    (with-open [conn (await-conn node)]
-      (info node "Initiating replica set")
-      (replica-set-initiate! conn (target-replica-set-config test))
+    ; Initiate RS
+    (when (= node (jepsen/primary test))
+      (with-open [conn (await-conn node port)]
+        (info node "Initiating replica set")
+        (replica-set-initiate! conn (target-replica-set-config test port repl-set-name))
 
-      (info node "Jepsen primary waiting for cluster join")
-      (await-join test conn)
-      (info node "Jepsen primary waiting for mongo election")
+        (info node "Jepsen primary waiting for cluster join")
+        (await-join test conn port)
+        (info node "Jepsen primary waiting for mongo election")
+        (await-primary conn)
+        (info node "Primary ready.")))
+
+    ; For reasons I really don't understand, you have to prevent other nodes
+    ; from checking the replset status until *after* we initiate the replset on
+    ; the primary--so we insert a barrier here to make sure other nodes don't
+    ; wait until primary initiation is complete.
+    (jepsen/synchronize test)
+
+    ; For other reasons I don't understand, you *have* to open a new set of
+    ; connections after replset initation. I have a hunch that this happens
+    ; because of a deadlock or something in mongodb itself, but it could also
+    ; be a client connection-closing-detection bug.
+
+    ; Amusingly, we can't just time out these operations; the client appears to
+    ; swallow thread interrupts and keep on doing, well, something. FML.
+    (with-open [conn (await-conn node port)]
+      (info node "waiting for cluster join")
+      (await-join test conn port)
+
+      (info node "waiting for primary")
       (await-primary conn)
-      (info node "Primary ready.")))
 
-  ; For reasons I really don't understand, you have to prevent other nodes
-  ; from checking the replset status until *after* we initiate the replset on
-  ; the primary--so we insert a barrier here to make sure other nodes don't
-  ; wait until primary initiation is complete.
-  (jepsen/synchronize test)
-
-  ; For other reasons I don't understand, you *have* to open a new set of
-  ; connections after replset initation. I have a hunch that this happens
-  ; because of a deadlock or something in mongodb itself, but it could also
-  ; be a client connection-closing-detection bug.
-
-  ; Amusingly, we can't just time out these operations; the client appears to
-  ; swallow thread interrupts and keep on doing, well, something. FML.
-  (with-open [conn (await-conn node)]
-    (info node "waiting for cluster join")
-    (await-join test conn)
-
-    (info node "waiting for primary")
-    (await-primary conn)
-
-    (info node "primary is" (str (primary conn)))
-    (jepsen/synchronize test)))
+      (info node "primary is" (str (primary conn)))
+      (jepsen/synchronize test))))
 
 (defn db
   "MongoDB for a particular HTTP URL"

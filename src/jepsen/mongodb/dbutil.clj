@@ -85,36 +85,48 @@
 (defn- install-binaries!
   "Installs the MongoDB binaries into the node's directory from a local
   directory, a local tarball, or a remote tarball."
-  [test node url]
-  ; Clean up the node's directory from a prior execution of the test.
-  (mcontrol/exec test :rm :-rf (mu/path-prefix test node))
+  ([test node url]
+   (install-binaries! test node url 0))
 
-  ; Create the data/ directory.
-  (mcontrol/exec test :mkdir :-p (mu/path-prefix test node "/data"))
+  ([test node url shards]
+   ; Clean up the node's directory from a prior execution of the test.
+   (mcontrol/exec test :rm :-rf (mu/path-prefix test node))
 
-  ; Install the MongoDB binaries into the node's directory.
-  (if-let [path (nth (re-find #"file://(.+)" url) 1)]
-    (if (.isDirectory (io/file path))
-      (install-local-directory! test node path)
-      (install-local-tarball! test node path))
-    (install-remote-tarball! test node url)))
+   ;; Create the data/ directory.
+   (mcontrol/exec test :mkdir :-p (mu/path-prefix test node "/data"))
+
+   ;; Create the configsvr-data/ directories for sharded tests.
+   (mcontrol/exec test :mkdir :-p (mu/path-prefix test node "/configsvr-data"))
+
+   (doseq [idx (range 0 shards)]
+     (mu/maybe-su test (mcontrol/exec test :mkdir :-p (mu/path-prefix test node (str "/data" idx)))))
+
+   ; Install the MongoDB binaries into the node's directory.
+   (if-let [path (nth (re-find #"file://(.+)" url) 1)]
+     (if (.isDirectory (io/file path))
+       (install-local-directory! test node path)
+       (install-local-tarball! test node path))
+     (install-remote-tarball! test node url))))
 
 (defn install!
   "Installs the MongoDB binaries into the node's directory from a local
   directory, a local tarball, or a remote tarball. Also creates a new user who
   owns the node's directory when running with some form of virtualization."
-  [test node url]
-  ; Add the "mongodb" user unless we are running without any virtualization.
-  (when (= :vm (:virt test))
-    (cu/ensure-user! (:username test)))
+  ([test node url]
+   (install! test node url 0))
 
-  (mu/maybe-su test (install-binaries! test node url))
+  ([test node url shards]
+   ; Add the "mongodb" user unless we are running without any virtualization.
+   (when (= :vm (:virt test))
+     (cu/ensure-user! (:username test)))
 
-  ; Set the permissions of the node's directory so that the "mongodb" user
-  ; owns its contents unless we are running with out any virtualization.
-  (when (= :vm (:virt test))
-    (c/exec :chown :-R (str (:username test) ":" (:username test))
-                       (mu/path-prefix test node))))
+   (mu/maybe-su test (install-binaries! test node url shards))
+
+   ; Set the permissions of the node's directory so that the "mongodb" user
+   ; owns its contents unless we are running with out any virtualization.
+   (when (= :vm (:virt test))
+     (c/exec :chown :-R (str (:username test) ":" (:username test))
+             (mu/path-prefix test node)))))
 
 (defn- log-files
   [test node]
