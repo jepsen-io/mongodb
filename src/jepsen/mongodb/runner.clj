@@ -26,7 +26,8 @@
   {"set" set/test
    "register" dc/test
    "read-concern-majority" rcm/test
-   "sharded-set" sharded/test})
+   "sharded-set" sharded/set-test
+   "sharded-register" sharded/register-test})
 
 (def ^:private clock-skew-mechs
   {"none" mt/noop-clock

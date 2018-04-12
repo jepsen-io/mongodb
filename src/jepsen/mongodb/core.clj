@@ -455,6 +455,9 @@
             {:type :info, :f :stop,    :value nil}
             (gen/sleep 30)])))
 
+(defn sharded-test? [name]
+  (.contains name "sharded"))
+
 (defn mongodb-test
   "Constructs a test with the given name prefixed by 'mongodb_', merging any
   given options. Special options for Mongo:
@@ -471,38 +474,44 @@
   extend the generator and checker accordingly."
   [name opts]
   (merge
-    (assoc tests/noop-test
-           :name            (str "mongodb"
-                                 "_test-" name
-                                 "_storageEngine-" (:storage-engine opts)
-                                 "_protocolVersion-" (:protocol-version opts))
-           :os              debian/os
-           :db              (db (:clock opts) (:tarball opts))
-           :nemesis         (nemesis/compose
-                              ; We allow for dbhash checks by composing our
-                              ; standard "chaos" nemesis with a client that
-                              ; handles :compare-dbhashes ops.
-                              {#{:isolate :kill :stop}
-                               (primary-divergence-nemesis (:clock opts))
-                               #{:compare-dbhashes} dbhash/client})
-           :generator       (gen/phases
-                              (->> (:generator opts)
-                                   (gen/nemesis (primary-divergence-gen))
-                                   (gen/time-limit (:time-limit opts)))
-                              (gen/nemesis
-                                (gen/once {:type :info, :f :stop, :value nil}))
-                              (gen/sleep 40)
-                              (gen/clients (:final-generator opts))
-                              ; Generate the :compare-dbhashes op at the very
-                              ; end of the test.
-                              (gen/nemesis dbhash/gen))
-           :client            (:client opts)
-           :checker           (checker/compose
-                                {:base (:checker opts)
-                                 :dbhash dbhash/checker}))
-    (dissoc opts
-            :checker
-            :client
-            :generator
-            :final-generator
-            :clock)))
+   (assoc tests/noop-test
+          :name      (str "mongodb"
+                          "_test-" name
+                          "_storageEngine-" (:storage-engine opts)
+                          "_protocolVersion-" (:protocol-version opts))
+          :os        debian/os
+          :db        (db (:clock opts) (:tarball opts))
+          :nemesis   (nemesis/compose
+                      ;; We allow for dbhash checks by composing our
+                      ;; standard "chaos" nemesis with a client that
+                      ;; handles :compare-dbhashes ops.
+                      {#{:isolate :kill :stop}
+                       (primary-divergence-nemesis (:clock opts))
+                       #{:compare-dbhashes} dbhash/client})
+          :generator (gen/phases
+                      (->> (:generator opts)
+                           (gen/nemesis (primary-divergence-gen))
+                           (gen/time-limit (:time-limit opts)))
+                      (gen/nemesis
+                       (gen/once {:type :info, :f :stop, :value nil}))
+                      (gen/sleep 40)
+                      (gen/clients (:final-generator opts))
+                      ;; Generate the :compare-dbhashes op at the very
+                      ;; end of the test.
+                      (gen/nemesis dbhash/gen))
+          :client     (:client opts)
+          :checker    (checker/compose
+                       {:base (:checker opts)
+                        :dbhash dbhash/checker}))
+
+   ;; We make sure that params in sharded tests take precedence over those assigned
+   ;; above. This function is not growing well should probably be reworked.
+   (if (sharded-test? name)
+     (dissoc opts
+             :clock)
+     (dissoc opts
+             :checker
+             :client
+             :generator
+             :final-generator
+             :clock))))
