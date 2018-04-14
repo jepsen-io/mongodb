@@ -487,7 +487,7 @@
                       ;; handles :compare-dbhashes ops.
                       {#{:isolate :kill :stop}
                        (primary-divergence-nemesis (:clock opts))
-                       #{:compare-dbhashes} dbhash/client})
+                       #{:compare-dbhashes} dbhash/nemesis})
           :generator (gen/phases
                       (->> (:generator opts)
                            (gen/nemesis (primary-divergence-gen))
