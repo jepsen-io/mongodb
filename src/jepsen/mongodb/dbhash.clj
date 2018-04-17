@@ -7,6 +7,7 @@
             [jepsen.client :as client]
             [jepsen.control :as c]
             [jepsen.generator :as gen]
+            [jepsen.nemesis :as nemesis]
             [jepsen.mongodb.control :as mcontrol]
             [jepsen.mongodb.mongo :as m]
             [jepsen.mongodb.util :as mu]))
@@ -50,7 +51,8 @@
   (gen/once {:type :info, :f :compare-dbhashes, :value nil}))
 
 (def client
-  "Client that runs the dbhash check against a replica set."
+  "Client that implements the jepsen.client/Client protocol and runs the dbhash
+  check against a replica set."
   (reify client/Client
     (open! [client test node] client)
     (close! [client test])
@@ -59,6 +61,16 @@
       (when (= :compare-dbhashes (:f op))
         (check-replica-set! test op)))
     (teardown! [client test])))
+
+(def nemesis
+  "Client that implements the jepsen.nemesis/Nemesis protocol and runs the
+  dbhash check against a replica set."
+  (reify nemesis/Nemesis
+    (setup! [nemesis test] nemesis)
+    (invoke! [nemesis test op]
+      (when (= :compare-dbhashes (:f op))
+        (check-replica-set! test op)))
+    (teardown! [nemesis test])))
 
 (def checker
   "Checker for reporting the results of the dbhash check."
