@@ -25,6 +25,7 @@
             [clj-time.local :as time.local]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.tools.logging :refer [info]]
             [knossos.model :as model])
   (:import [java.util.concurrent Semaphore
             TimeUnit]))
@@ -182,6 +183,7 @@
     (core/with-errors op #{:read}
       (case (:f op)
         :add (let [res (m/insert! coll {:value (:value op)})]
+               (reset! (:last-op-id test) (:value op))
                (assoc op :type :ok))
         :read (assoc op
                      :type :ok
@@ -224,6 +226,7 @@
     (core/with-errors op #{:read}
       (let [id    (key (:value op))
             value (val (:value op))]
+        (reset! (:last-op-id test) id)
         (case (:f op)
           :read (let [doc (if read-with-find-and-modify
                             ;; CAS read
@@ -259,60 +262,63 @@
   (setup! [_ _])
   (teardown! [_ _]))
 
-(defn register-client
-  [opts]
+(defn register-client [opts]
   (RegisterClient. "jepsen" "sharded"
            (:read-concern opts)
            (:write-concern opts)
            (:read-with-find-and-modify opts)
            nil nil))
 
-(defn nemesis-id
-  "Takes a test map and returns a document ID to move.
-  Nemeses don't have a view of the current op ID so we look at how much time
-  has elapsed since the test started and do some guesswork based on expected
-  throughput to get a document ID for chunk moves."
-  [{:keys [start-time]} model]
-  (case model
-    :set (let [elapsed (time/interval start-time (time.local/local-now))]
-           (* 2 (time/in-seconds elapsed)))
-    :register (rand-int 8)))
+(defn maybe-conn
+  "Tries to connect to a router. Returns the conn or nil."
+  [node]
+  (let [conn (util/meh (m/client node))
+        ;; Check to see if we have a valid connection
+        test (util/meh (m/admin-command! conn :listCollections 1))]
+    (when-not (or (instance? Exception conn)
+                  (instance? Exception test))
+      conn)))
 
-(defn balancer-nemesis [conns model]
+(defn get-routers
+  "Attempts to connect to each node, returning a single router conn."
+  [nodes]
+  (->> nodes
+       (map maybe-conn)
+       (remove nil?)))
+
+(defn balancer-nemesis [conns]
   (reify nemesis/Nemesis
     (setup! [this test]
-      (balancer-nemesis
-       ;; TODO you just need 1 valid router here, not all of them
-       ;;      make sure you always get a valid router when (< mongos-count nodes)
-       ;;      try nodes in sequence until you get a good connection
-       (into {} (util/real-pmap (juxt identity core/await-conn) (:nodes test)))))
+      (balancer-nemesis (get-routers (:nodes test))))
 
     (invoke! [this test op]
         (case (:f op)
-          :move (let [[node conn] (nth (vec conns) (-> test :nodes count rand-int))
-                      dest-replset (str "jepsen" (rand-int (:shard-count test)))
-                      id (nemesis-id test model)]
-                  (m/admin-command! conn
+          :move (let [dest-replset (str "jepsen" (rand-int (:shard-count test)))
+                      id @(:last-op-id test)]
+                  (assert (not (empty? conns)) "Nemesis is unable to connect a mongos router.")
+                  (m/admin-command! (rand-nth conns)
                                     :moveChunk "jepsen.sharded"
                                     :find {:_id id}
                                     :to dest-replset)
                   (assoc op :value [:moving-chunk-with id :to dest-replset]))))))
 
-(defn sharded-nemesis [model]
+(defn sharded-nemesis []
   (nemesis/compose
    {#{:start :stop} (nemesis/partition-random-halves)
-    #{:move} (balancer-nemesis nil model)}))
+    #{:move} (balancer-nemesis nil)}))
 
 (defn shard-migration-gen []
   (gen/seq (cycle [(gen/sleep 10)
                    {:type :info, :f :move}
+                   (gen/sleep 0.5)
                    {:type :info, :f :start}
                    (gen/sleep 20)
                    {:type :info, :f :stop}])))
 
 (defn ensure-shard-count [opts]
-  (when (< (:shard-count opts) 1)
-    (throw (IllegalArgumentException. "Sharded tests must be run with a --shard-count of 1 or higher"))))
+  (assert
+   (<= 1 (:shard-count opts))
+   "Sharded tests must be run with a --shard-count of 1 or higher"))
 
 (defn set-test
   "Tests against a sharded mongodb cluster. We insert documents against
@@ -326,14 +332,14 @@
      (merge
       opts
       {:client (set-client opts)
-       :nemesis (sharded-nemesis 2)
+       :nemesis (sharded-nemesis)
+       :last-op-id (atom nil)
        :generator (gen/phases
                    (->> (range)
                         (map (fn [x] {:type :invoke, :f :add, :value x}))
                         gen/seq
                         (gen/stagger 1/2)
-                        (gen/nemesis
-                         (shard-migration-gen))
+                        (gen/nemesis (shard-migration-gen))
                         (gen/time-limit (:time-limit opts)))
                    (gen/nemesis
                     (gen/once {:type :info, :f :stop, :value nil}))
@@ -367,7 +373,8 @@
      (merge
       opts
       {:client (register-client opts)
-       :nemesis (sharded-nemesis :register)
+       :nemesis (sharded-nemesis)
+       :last-op-id (atom nil)
        :generator (->> (independent/concurrent-generator
                         10
                         (range)
