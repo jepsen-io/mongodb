@@ -320,6 +320,12 @@
            (assoc ~op :type :fail, :error :no-ready-server)
            (throw e#)))
 
+       (catch java.lang.IllegalArgumentException e#
+         (condp re-find (.getMessage e#)
+           #"clientSession can not be null"
+           (assoc ~op :type :fail, :error :causal-link-crashed)
+           (throw e#)))
+
        ; A network error is indeterminate
        (catch com.mongodb.MongoSocketReadException e#
          (assoc ~op :type error-type# :error :socket-read))
@@ -456,7 +462,8 @@
             (gen/sleep 30)])))
 
 (defn sharded-test? [name]
-  (.contains name "sharded"))
+  (or (.contains name "sharded")
+      (.contains name "causal")))
 
 (defn mongodb-test
   "Constructs a test with the given name prefixed by 'mongodb_', merging any
@@ -505,7 +512,7 @@
                         :dbhash dbhash/checker}))
 
    ;; We make sure that params in sharded tests take precedence over those assigned
-   ;; above. This function is not growing well should probably be reworked.
+   ;; above. This function is not growing well and should probably be reworked.
    (if (sharded-test? name)
      (dissoc opts
              :clock)

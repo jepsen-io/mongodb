@@ -26,6 +26,7 @@
   {"set" set/test
    "register" dc/test
    "read-concern-majority" rcm/test
+   "causal-register" sharded/causal-test
    "sharded-set" sharded/set-test
    "sharded-register" sharded/register-test})
 
@@ -173,7 +174,9 @@
    [nil "--mongos-count INT"
     "Number of mongos processes to run, max one per node"
     :parse-fn #(Long/parseLong %)
-    :validate [identity "Must be a number"]]])
+    :validate [identity "Must be a number"]]
+
+   [nil "--secondary-ok" "Enable secondary reads"]])
 
 (defn -main
   [& args]

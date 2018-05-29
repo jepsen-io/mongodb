@@ -7,9 +7,11 @@
   (:import (clojure.lang ExceptionInfo)
            (java.util ArrayList
                       List)
-           (org.bson Document)
+           (org.bson Document
+                     BsonTimestamp)
            (com.mongodb MongoClient
                         MongoClientOptions
+                        ClientSessionOptions
                         ReadConcern
                         ReadPreference
                         ServerAddress
@@ -22,9 +24,9 @@
                                      ReturnDocument
                                      Sorts
                                      Updates
-                                     UpdateOptions
-                                     )
-           (com.mongodb.client.result UpdateResult)))
+                                     UpdateOptions)
+           (com.mongodb.client.result UpdateResult)
+           (com.mongodb.session ClientSession)))
 
 (defn ^MongoClientOptions default-client-options
   "MongoDB client options."
@@ -53,6 +55,12 @@
   [test]
   (MongoClient. (->> test :nodes (map server-address))
                 (default-client-options)))
+
+(defn start-causal-session [client]
+  (let [opts (-> (ClientSessionOptions/builder)
+                 (.causallyConsistent true)
+                 .build)]
+    (.startSession client opts)))
 
 (defn ^MongoDatabase db
   "Gets a Mongo database from a client."
@@ -96,6 +104,14 @@
   (let [write-concern (c/get write-concerns write-concern)]
     (assert write-concern)
     (.withWriteConcern coll write-concern)))
+
+(defn ^MongoClient enable-secondary-reads
+  [^MongoClient client]
+  (.slaveOk client))
+
+(defn ^BsonTimestamp optime
+  [^ClientSession session]
+  (.getOperationTime session))
 
 (defn document
   "Creates a Mongo document from a map."
@@ -172,12 +188,20 @@
        (map document->map)))
 
 (defn find-one
-  "Find a document by ID."
-  [^MongoCollection coll id]
-  (-> coll
-      (.find (Filters/eq "_id" id))
-      .first
-      document->map))
+  "Find a document by ID.
+  If a session is provided first, will use that session for a
+  causally consistent read"
+  ([^MongoCollection coll id]
+   (-> coll
+       (.find (Filters/eq "_id" id))
+       .first
+       document->map))
+
+  ([^ClientSession session ^MongoCollection coll id]
+   (-> coll
+       (.find session (Filters/eq "_id" id))
+       .first
+       document->map)))
 
 (defn read-with-find-and-modify
   "Perform a read of a document by ID with findAndModify."
@@ -224,20 +248,38 @@
 (defn upsert!
   "Ensures the existence of the given document, a map with at minimum an :_id
   key."
-  [^MongoCollection coll doc]
-  (assert (:_id doc))
-  (with-retry []
-    (-> coll
-        (.replaceOne (Filters/eq "_id" (:_id doc))
-                     (document doc)
-                     (.upsert (UpdateOptions.) true))
-        update-result->map)
-    (catch com.mongodb.MongoWriteException e
-      ; This is probably
-      ; https://jira.mongodb.org/browse/SERVER-14322; we back off randomly
-      ; and retry.
-      (if (= 11000 (.getCode e))
-        (do (info "Retrying duplicate key collision")
-            (Thread/sleep (rand-int 100))
-            (retry))
-        (throw e)))))
+  ([^MongoCollection coll doc]
+   (assert (:_id doc))
+   (with-retry []
+     (-> coll
+         (.replaceOne (Filters/eq "_id" (:_id doc))
+                      (document doc)
+                      (.upsert (UpdateOptions.) true))
+         update-result->map)
+     (catch com.mongodb.MongoWriteException e
+                                        ; This is probably
+                                        ; https://jira.mongodb.org/browse/SERVER-14322; we back off randomly
+                                        ; and retry.
+       (if (= 11000 (.getCode e))
+         (do (info "Retrying duplicate key collision")
+             (Thread/sleep (rand-int 100))
+             (retry))
+         (throw e)))))
+
+  ([^ClientSession session ^MongoCollection coll doc]
+   (assert (:_id doc))
+   (with-retry []
+     (-> coll
+         (.replaceOne session (Filters/eq "_id" (:_id doc))
+                      (document doc)
+                      (.upsert (UpdateOptions.) true))
+         update-result->map)
+     (catch com.mongodb.MongoWriteException e
+                                        ; This is probably
+                                        ; https://jira.mongodb.org/browse/SERVER-14322; we back off randomly
+                                        ; and retry.
+       (if (= 11000 (.getCode e))
+         (do (info "Retrying duplicate key collision")
+             (Thread/sleep (rand-int 100))
+             (retry))
+         (throw e))))))

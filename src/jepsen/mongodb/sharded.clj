@@ -25,6 +25,7 @@
             [clj-time.local :as time.local]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.pprint :refer [pprint]]
             [clojure.tools.logging :refer [info]]
             [knossos.model :as model])
   (:import [java.util.concurrent Semaphore
@@ -152,7 +153,11 @@
                                                     :key {:_id 1}))
 
                         ;; Set chunk size, defaults to 64MB
-                        (m/upsert! coll {:_id "chunksize" :value chunk-size})
+                        (try
+                          (m/upsert! coll {:_id "chunksize" :value chunk-size})
+                          (catch com.mongodb.MongoCommandException e
+                            (when-not (re-matches #"duplicate key error" (.getMessage e))
+                              (throw e))))
 
                         ;; Nodes race to acquire `--mongos-count` locks. If they do not acquire a
                         ;; lock, they tear down the router they used for setup, just like a
@@ -311,6 +316,10 @@
   (gen/seq (cycle [(gen/sleep 10)
                    {:type :info, :f :move}
                    (gen/sleep 0.5)
+                   {:type :info, :f :move}
+                   (gen/sleep 0.5)
+                   {:type :info, :f :move}
+                   (gen/sleep 0.5)
                    {:type :info, :f :start}
                    (gen/sleep 20)
                    {:type :info, :f :stop}])))
@@ -357,9 +366,12 @@
                   :perf (checker/perf)})}))))
 
 ;; Generators
-(defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 (defn r   [_ _] {:type :invoke, :f :read})
+(defn ri  [_ _] {:type :invoke, :f :read-init})
+(defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 (defn cas [_ _] {:type :invoke, :f :cas, :value [(rand-int 5) (rand-int 5)]})
+(defn cw1 [_ _] {:type :invoke, :f :write, :value 1})
+(defn cw2 [_ _] {:type :invoke, :f :write, :value 2})
 
 (defn register-test
   "Tests against a sharded mongodb cluster. We insert documents against
@@ -397,3 +409,120 @@
                  {:linear  (independent/checker (checker/linearizable))
                   :timeline (independent/checker (timeline/html))
                   :perf     (checker/perf)})}))))
+
+(defrecord CausalClient [db-name
+                         coll-name
+                         read-concern
+                         write-concern
+                         secondary-ok?
+                         client
+                         coll
+                         session
+                         last-optime]
+  client/Client
+  (open! [this test node]
+    (let [client (m/client node)
+          client (if secondary-ok?
+                   (m/enable-secondary-reads client)
+                   client)
+          coll   (-> client
+                     (m/db db-name)
+                     (m/collection coll-name)
+                     (m/with-read-concern  read-concern)
+                     (m/with-write-concern write-concern))]
+      (assoc this
+             :client      client
+             :coll        coll
+             :session     (atom nil)
+             :last-optime (atom nil))))
+
+  (invoke! [this test op]
+    (core/with-errors op #{read}
+      (let [id    (key (:value op))
+            value (val (:value op))]
+        (case (:f op)
+          :read-init (let [_   (reset! session (m/start-causal-session client))
+                           doc (m/find-one @session coll id)
+                           ;; Set the value to 0 (init value for BEGH checker)
+                           ;; if read returns nil.
+                           v   (or (:value doc) 0)
+                           ;; Turn this into something comparable
+                           optime (-> (m/optime @session) .getValue)
+                           ;; Update test state with latest optime for key/session
+                           _ (reset! last-optime optime)]
+                       (assoc op
+                              :type  :ok
+                              :value (independent/tuple id v)
+                              :position optime
+                              :link :init))
+
+          :read (let [doc (m/find-one @session coll id)
+                      v   (or (:value doc) 0)
+                      optime (-> (m/optime @session) .getValue)
+                      lo @last-optime
+                      _ (reset! last-optime optime)]
+                  (assoc op
+                         :type  :ok
+                         :value (independent/tuple id v)
+                         :position optime
+                         :link lo))
+
+          :write (let [res (m/upsert! @session coll {:_id id, :value value})
+                       optime (-> (m/optime @session) .getValue)
+                       lo @last-optime
+                       _ (reset! last-optime optime)]
+                   ;; Note that modified-count could be zero, depending on the
+                   ;; storage engine, if you perform a write the same as the
+                   ;; current value.
+                   (assert (< (:matched-count res) 2))
+                   (assoc op
+                          :type :ok
+                          :position optime
+                          :link lo))))))
+
+  (close! [_ _]
+    (.close ^java.io.Closeable client))
+
+  (setup! [_ _])
+  (teardown! [_ _]))
+
+(defn causal-client [opts]
+  (CausalClient. "jepsen"
+                 "causal-register"
+                 (:read-concern opts)
+                 (:write-concern opts)
+                 (:secondary-ok? opts)
+                 nil
+                 nil
+                 nil
+                 nil))
+
+(defn causal-test [opts]
+  (ensure-shard-count opts)
+  (let [mongos-sem    (Semaphore. (or (:mongos-count opts) (count (:nodes opts))))]
+    (core/mongodb-test
+     "causal-register"
+     (merge
+      opts
+      {:concurrency (count (:nodes opts))
+       :client (causal-client opts)
+       :nemesis (nemesis/partition-random-halves)
+       :os debian/os
+       :generator (->> (independent/concurrent-generator
+                        1
+                        (range)
+                        (fn [k] (gen/seq [ri cw1 r cw2 r])))
+                       (gen/stagger 1)
+                       (gen/nemesis
+                        (gen/seq (cycle [(gen/sleep 10)
+                                         {:type :info, :f :start}
+                                         (gen/sleep 10)
+                                         {:type :info, :f :stop}])))
+                       (gen/time-limit (:time-limit opts)))
+       :db (db (:clock opts)
+               (:tarball opts)
+               {:mongos-sem  mongos-sem
+                :chunk-size  (:chunk-size opts)
+                :shard-count (:shard-count opts)})
+       :model (model/causal-register)
+       :checker (independent/checker (checker/causal))}))))
