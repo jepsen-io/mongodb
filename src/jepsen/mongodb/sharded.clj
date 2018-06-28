@@ -1,5 +1,6 @@
 (ns jepsen.mongodb.sharded
-  "TODO Namespace documentation for this"
+  "MongoDB tests against a sharded cluster. Including sets,
+  CAS register,and causal register."
   (:refer-clojure :exclude [test])
   (:require [jepsen.mongodb
              [core :as core]
@@ -18,6 +19,7 @@
              [independent :as independent]
              [nemesis :as nemesis]
              [util    :as util]]
+            [jepsen.tests.causal :as causal]
             [jepsen.checker.timeline :as timeline]
             [jepsen.control.util :as cu]
             [jepsen.os.debian :as debian]
@@ -27,7 +29,8 @@
             [clojure.string :as str]
             [clojure.pprint :refer [pprint]]
             [clojure.tools.logging :refer [info]]
-            [knossos.model :as model])
+            [knossos.model :as model]
+            [jepsen.tests :as tests])
   (:import [java.util.concurrent Semaphore
             TimeUnit]))
 
@@ -367,11 +370,8 @@
 
 ;; Generators
 (defn r   [_ _] {:type :invoke, :f :read})
-(defn ri  [_ _] {:type :invoke, :f :read-init})
 (defn w   [_ _] {:type :invoke, :f :write, :value (rand-int 5)})
 (defn cas [_ _] {:type :invoke, :f :cas, :value [(rand-int 5) (rand-int 5)]})
-(defn cw1 [_ _] {:type :invoke, :f :write, :value 1})
-(defn cw2 [_ _] {:type :invoke, :f :write, :value 2})
 
 (defn register-test
   "Tests against a sharded mongodb cluster. We insert documents against
@@ -499,30 +499,19 @@
 
 (defn causal-test [opts]
   (ensure-shard-count opts)
-  (let [mongos-sem    (Semaphore. (or (:mongos-count opts) (count (:nodes opts))))]
+  (let [mongos-sem (Semaphore. (or (:mongos-count opts)
+                                   (count (:nodes opts))))]
     (core/mongodb-test
      "causal-register"
      (merge
       opts
+      (causal/test opts)
       {:concurrency (count (:nodes opts))
        :client (causal-client opts)
        :nemesis (nemesis/partition-random-halves)
        :os debian/os
-       :generator (->> (independent/concurrent-generator
-                        1
-                        (range)
-                        (fn [k] (gen/seq [ri cw1 r cw2 r])))
-                       (gen/stagger 1)
-                       (gen/nemesis
-                        (gen/seq (cycle [(gen/sleep 10)
-                                         {:type :info, :f :start}
-                                         (gen/sleep 10)
-                                         {:type :info, :f :stop}])))
-                       (gen/time-limit (:time-limit opts)))
        :db (db (:clock opts)
                (:tarball opts)
                {:mongos-sem  mongos-sem
                 :chunk-size  (:chunk-size opts)
-                :shard-count (:shard-count opts)})
-       :model (model/causal-register)
-       :checker (independent/checker (checker/causal))}))))
+                :shard-count (:shard-count opts)})}))))

@@ -32,11 +32,11 @@
   "MongoDB client options."
   []
   (.build
-    (doto (MongoClientOptions/builder)
-      (.serverSelectionTimeout   1000)
-      (.maxWaitTime              60000)
-      (.connectTimeout           60000)
-      (.socketTimeout            30000))))
+   (doto (MongoClientOptions/builder)
+     (.serverSelectionTimeout   1000)
+     (.maxWaitTime              60000)
+     (.connectTimeout           60000)
+     (.socketTimeout            30000))))
 
 (defn server-address
   ([node]
@@ -249,35 +249,27 @@
   "Ensures the existence of the given document, a map with at minimum an :_id
   key."
   ([^MongoCollection coll doc]
-   (assert (:_id doc))
-   (with-retry []
-     (-> coll
-         (.replaceOne (Filters/eq "_id" (:_id doc))
-                      (document doc)
-                      (.upsert (UpdateOptions.) true))
-         update-result->map)
-     (catch com.mongodb.MongoWriteException e
-                                        ; This is probably
-                                        ; https://jira.mongodb.org/browse/SERVER-14322; we back off randomly
-                                        ; and retry.
-       (if (= 11000 (.getCode e))
-         (do (info "Retrying duplicate key collision")
-             (Thread/sleep (rand-int 100))
-             (retry))
-         (throw e)))))
+   (upsert! nil coll doc))
 
   ([^ClientSession session ^MongoCollection coll doc]
    (assert (:_id doc))
    (with-retry []
-     (-> coll
-         (.replaceOne session (Filters/eq "_id" (:_id doc))
-                      (document doc)
-                      (.upsert (UpdateOptions.) true))
-         update-result->map)
+     (if session
+       (-> coll
+           (.replaceOne session
+                        (Filters/eq "_id" (:_id doc))
+                        (document doc)
+                        (.upsert (UpdateOptions.) true))
+           update-result->map)
+       (-> coll
+           (.replaceOne (Filters/eq "_id" (:_id doc))
+                        (document doc)
+                        (.upsert (UpdateOptions.) true))
+           update-result->map))
      (catch com.mongodb.MongoWriteException e
-                                        ; This is probably
-                                        ; https://jira.mongodb.org/browse/SERVER-14322; we back off randomly
-                                        ; and retry.
+       ;; This is probably
+       ;; https://jira.mongodb.org/browse/SERVER-14322; we back off randomly
+       ;; and retry.
        (if (= 11000 (.getCode e))
          (do (info "Retrying duplicate key collision")
              (Thread/sleep (rand-int 100))
