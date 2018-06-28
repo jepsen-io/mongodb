@@ -15,6 +15,12 @@ lein run test -t set
 # 100 second linearizability test with write concern "journaled" and "local" read concern
 lein run -t register --time-limit 100 -w journaled -r local
 
+# 120 second sharded-set test with write concern "w1" and "local" read concern, 2 shards, and 4 mongos routers
+lein run -t sharded-set --time-limit 120 -w w1 -r local --shard-count 2 --mongos-count 4
+
+# 300 second causal-register test with write concern "w1" and "local" read concern and one shard
+lein run -t causal-register --time-limit 300 -w w1 -r local --shard-count 1
+
 # Use the mmapv1 storage engine
 lein run test -t register -s mmapv1
 
