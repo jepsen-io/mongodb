@@ -185,6 +185,6 @@
            (jc/single-test-cmd
              {:opt-spec opt-spec
               :opt-fn process-opts
-              :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-3.6.4.tgz"
+              :tarball "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-debian81-4.0.0-rc1.tgz"
               :test-fn (fn [opts] ((:test opts) (dissoc opts :test)))}))
     args))
