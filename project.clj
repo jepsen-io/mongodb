@@ -1,23 +1,10 @@
-(defproject jepsen.mongodb "0.2.3"
+(defproject jepsen.mongodb "0.3.0-SNAPSHOT"
   :description "Jepsen MongoDB tests"
-  :url "https://github.com/jepsen-io/mongodb"
-  :license {:name "Eclipse Public License"
-            :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :dependencies [[org.clojure/clojure "1.8.0"]
-                 [org.clojure/tools.cli "0.3.5"]
-                 [jepsen "0.1.10"]
-                 [org.mongodb/mongodb-driver "3.6.3"]]
-  :jvm-opts ["-Xmx16g"
-             "-Xms16g"
-             "-Xmn4g"
-             "-XX:+UseConcMarkSweepGC"
-             "-XX:+UseParNewGC"
-             "-XX:+CMSParallelRemarkEnabled"
-             "-XX:+AggressiveOpts"
-             "-XX:+UseFastAccessorMethods"
-             "-XX:MaxInlineLevel=32"
-             "-XX:MaxRecursiveInlineLevel=2"
-             "-server"]
-  :main jepsen.mongodb.runner
-  :aot [jepsen.mongodb.runner
-        clojure.tools.logging.impl])
+  :url "http://github.com/jepsen-io/mongodb"
+  :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
+            :url "https://www.eclipse.org/legal/epl-2.0/"}
+  :dependencies [[org.clojure/clojure "1.10.0"]
+                 [jepsen "0.1.19-SNAPSHOT"]
+                 [org.mongodb/mongodb-driver-sync "4.0.2"]]
+  :main jepsen.mongodb
+  :repl-options {:init-ns jepsen.mongodb})
