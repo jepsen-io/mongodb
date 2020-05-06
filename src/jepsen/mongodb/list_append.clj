@@ -2,6 +2,7 @@
   "Elle list append workload"
   (:require [clojure [pprint :refer [pprint]]]
             [clojure.tools.logging :refer [info warn]]
+            [dom-top.core :refer [with-retry]]
             [jepsen [client :as client]
                     [checker :as checker]
                     [util :as util :refer [timeout]]]
@@ -42,10 +43,15 @@
 
 (defn apply-mop!
   "Applies a transactional micro-operation to a connection."
-  [conn session [f k v :as mop]]
-  (let [coll (-> conn
-                 (c/db db-name test)
-                 (c/collection coll-name))]
+  [test db session [f k v :as mop]]
+  (let [coll (c/collection db coll-name)]
+    ;(info (with-out-str
+    ;        (println "db levels")
+    ;        (prn :sn-rc ReadConcern/SNAPSHOT)
+    ;        (prn :ma-rc ReadConcern/MAJORITY)
+    ;        (prn :db-rc (.getReadConcern db))
+    ;        (prn :ma-wc WriteConcern/MAJORITY)
+    ;        (prn :db-wc (.getWriteConcern db))))
     (case f
       :r      [f k (vec (:value (c/find-one coll session k)))]
       :append (let [filt (Filters/eq "_id" k)
@@ -64,40 +70,55 @@
 
   (setup! [this test]
     ; Collections have to be predeclared; transactions can't create them.
-    (try (let [db   (c/db conn db-name test)]
-           ; Shard database
-           (c/admin-command! conn {:enableSharding db-name})
-           (let [coll (c/create-collection! db coll-name)]
-             (info "Collection created")
-             ; Shard it!
-             (c/admin-command! conn
-                               {:shardCollection  (str db-name "." coll-name)
-                                :key              {:_id :hashed}
-                                :numInitialChunks 7})
-             (info "Collection sharded")
-             (info (with-out-str
-                     (pprint (c/admin-command! conn {:listShards 1}))))))
-         (catch com.mongodb.MongoNotPrimaryException e
-           ; sigh, why is this a thing
-           nil)))
+    (with-retry [tries 5]
+      (let [db   (c/db conn db-name test)]
+        ; Shard database
+        (c/admin-command! conn {:enableSharding db-name})
+        (let [coll (c/create-collection! db coll-name)]
+          (info "Collection created")
+          ; Shard it!
+          (c/admin-command! conn
+                            {:shardCollection  (str db-name "." coll-name)
+                             :key              {:_id :hashed}
+                             :numInitialChunks 7})
+          (info "Collection sharded")
+          (info (with-out-str
+                  (pprint (c/admin-command! conn {:listShards 1}))))))
+      (catch com.mongodb.MongoNotPrimaryException e
+        ; sigh, why is this a thing
+        nil)
+      (catch com.mongodb.MongoSocketReadTimeoutException e
+        (if (pos? tries)
+          (do (info "Timed out sharding DB and collection; waiting to retry")
+              (Thread/sleep 5000)
+              (retry (dec tries)))
+          (throw e)))))
 
   (invoke! [this test op]
     (let [txn (:value op)]
       (c/with-errors op
-        (timeout 5000 (assoc op :type :info, :error :timeout)
+        ;(timeout 5000 (assoc op :type :info, :error :timeout)
           (let [txn' (if (<= (count txn) 1)
                        ; We can run without a transaction
-                       [(apply-mop! conn nil (first txn))]
+                       (let [db (c/db conn db-name
+                                      {:read-concern
+                                       (c/transactionless-read-concern
+                                         (:read-concern test))
+                                       :write-concern
+                                       (:write-concern test)})]
+                         [(apply-mop! test db nil (first txn))])
 
                        ; We need a transaction
-                       (with-open [session (c/start-session conn)]
-                         (let [opts (txn-options test)
-                               body (c/txn
-                                      ;(info :txn-begins)
-                                      (mapv (partial apply-mop! conn session)
-                                            (:value op)))]
-                           (.withTransaction session body opts))))]
-            (assoc op :type :ok, :value txn'))))))
+                       (let [db (c/db conn db-name test)]
+                         (with-open [session (c/start-session conn)]
+                           (let [opts (txn-options test)
+                                 body (c/txn
+                                        ;(info :txn-begins)
+                                        (mapv (partial apply-mop!
+                                                       test db session)
+                                              (:value op)))]
+                             (.withTransaction session body opts)))))]
+            (assoc op :type :ok, :value txn')))))
 
   (teardown! [this test])
 

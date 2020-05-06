@@ -374,9 +374,10 @@
   (log-files [this test node]
     [mongos-log-file]))
 
-(defrecord ShardedDB [mongos shards]
+(defrecord ShardedDB [mongos shards tcpdump]
   db/DB
   (setup! [this test node]
+    (db/setup! tcpdump test node)
     (let [shard (shard-for-node this node)]
       (info "Setting up shard" shard)
       (db/setup! (:db shard) (test-for-shard test shard) node))
@@ -387,11 +388,13 @@
     (db/teardown! mongos test node)
     (let [shard (shard-for-node this node)]
       (info "Tearing down shard" shard)
-      (db/teardown! (:db shard) (test-for-shard test shard) node)))
+      (db/teardown! (:db shard) (test-for-shard test shard) node))
+    (db/teardown! tcpdump test node))
 
   db/LogFiles
   (log-files [this test node]
-    (concat (db/log-files mongos test node)
+    (concat (db/log-files tcpdump test node)
+            (db/log-files mongos test node)
             (let [shard (shard-for-node this node)]
               (db/log-files (:db shard) (test-for-shard test shard) node))))
 
@@ -446,4 +449,7 @@
            (map (fn [[shard-name nodes]]
                   {:name  shard-name
                    :nodes nodes
-                   :db    (replica-set-db)}))))))
+                   :db    (replica-set-db)})))
+
+      (db/tcpdump {:filter "host 192.168.122.1"
+                   :ports  [client/mongos-port]}))))

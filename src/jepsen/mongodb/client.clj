@@ -177,6 +177,14 @@
       "majority"        ReadConcern/MAJORITY
       "snapshot"        ReadConcern/SNAPSHOT)))
 
+(defn transactionless-read-concern
+  "Read concern SNAPSHOT isn't supported outside transactions; we weaken it to
+  MAJORITY."
+  [rc]
+  (case rc
+    "snapshot" "majority"
+    rc))
+
 ;; Error handling
 (defmacro with-errors
   "Remaps common errors; takes an operation and returns a :fail or :info op
@@ -188,6 +196,9 @@
 
      (catch com.mongodb.MongoNodeIsRecoveringException e#
        (assoc ~op :type :fail, :error :node-recovering))
+
+     (catch com.mongodb.MongoSocketReadTimeoutException e#
+       (assoc ~op :type :info, :error :socket-read-timeout))
 
      (catch com.mongodb.MongoTimeoutException e#
        (condp re-find (.getMessage e#)
