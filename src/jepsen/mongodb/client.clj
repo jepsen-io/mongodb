@@ -209,6 +209,7 @@
 
      (catch com.mongodb.MongoCommandException e#
        (condp re-find (.getMessage e#)
+         ; Huh, this is NOT, as it turns out, a determinate failure.
          #"TransactionCoordinatorSteppingDown"
          (assoc ~op :type :fail, :error :transaction-coordinator-stepping-down)
 
@@ -224,6 +225,8 @@
 
      (catch com.mongodb.MongoQueryException e#
        (condp re-find (.getMessage e#)
+         #"code 251" (assoc ~op :type :fail, :error :transaction-aborted)
+
          ; Why are there two ways to report this?
          #"code 10107 " (assoc ~op :type :fail, :error :not-primary-2)
 

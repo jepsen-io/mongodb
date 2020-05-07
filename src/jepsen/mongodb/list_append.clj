@@ -30,15 +30,19 @@
   ; a *single* invocation of the transaction, not the retries. We work around
   ; this by timing out in Jepsen as well.
   (cond-> (TransactionOptions/builder)
-    true                  (.maxCommitTime 5 TimeUnit/SECONDS)
+    true (.maxCommitTime 5 TimeUnit/SECONDS)
+
     ; MongoDB *ignores* the DB and collection-level read and write concerns
     ; within a transaction, which seems... bad, because it actually
     ; *downgrades* safety if you chose high levels at the db or collection
     ; levels! We have to set them here too.
-    (:read-concern test)  (.readConcern (c/read-concern (:read-concern test)))
-    (:write-concern test) (.writeConcern
-                            (c/write-concern (:write-concern test)))
-    true                  .build))
+    (:txn-read-concern test)
+    (.readConcern (c/read-concern (:txn-read-concern test)))
+
+    (:txn-write-concern test)
+    (.writeConcern (c/write-concern (:txn-write-concern test)))
+
+    true .build))
 
 
 (defn apply-mop!
@@ -80,10 +84,14 @@
           (c/admin-command! conn
                             {:shardCollection  (str db-name "." coll-name)
                              :key              {:_id :hashed}
+                             ; WIP; gotta figure out how we're going to
+                             ; generate queries with the shard key in them.
+                             ;:key              {(case (:shard-key test)
+                             ;                     :id :_id
+                             ;                     :value :value)
+                             ;                   :hashed}
                              :numInitialChunks 7})
-          (info "Collection sharded")
-          (info (with-out-str
-                  (pprint (c/admin-command! conn {:listShards 1}))))))
+          (info "Collection sharded")))
       (catch com.mongodb.MongoNotPrimaryException e
         ; sigh, why is this a thing
         nil)
@@ -98,14 +106,12 @@
     (let [txn (:value op)]
       (c/with-errors op
         ;(timeout 5000 (assoc op :type :info, :error :timeout)
-          (let [txn' (if (<= (count txn) 1)
+          (let [txn' (if (and (<= (count txn) 1)
+                              (not (:singleton-txns test)))
                        ; We can run without a transaction
                        (let [db (c/db conn db-name
-                                      {:read-concern
-                                       (c/transactionless-read-concern
-                                         (:read-concern test))
-                                       :write-concern
-                                       (:write-concern test)})]
+                                      {:read-concern  (:read-concern test)
+                                       :write-concern (:write-concern test)})]
                          [(apply-mop! test db nil (first txn))])
 
                        ; We need a transaction
@@ -129,7 +135,7 @@
   "A generator, client, and checker for a list-append test."
   [opts]
   (assoc (list-append/test {:key-count          10
-                            :max-txn-length     4
+                            :max-txn-length     (:max-txn-length opts 4)
                             :max-writes-per-key (:max-writes-per-key opts)
                             :consistency-models [:strong-snapshot-isolation]})
          :client (Client. nil)))

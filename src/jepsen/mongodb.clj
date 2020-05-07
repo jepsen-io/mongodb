@@ -55,14 +55,18 @@
                          :nodes     (:nodes opts)
                          :faults    (:nemesis opts)
                          :partition {:targets [:primaries :majority]}
-                         :pause     {:targets [:primaries :majority :all]}
-                         :kill      {:targets [:primaries :majority :all]}
-                         :interval  5})]
+                         :pause     {:targets [nil :primaries :majority :all]}
+                         :kill      {:targets [nil :primaries :majority :all]}
+                         :interval  2})]
     (merge tests/noop-test
            opts
            {:name (str "mongodb " (name workload-name)
                        (when-let [w (:write-concern opts)] (str " w:" w))
                        (when-let [r (:read-concern opts)] (str " r:" r))
+                       (when-let [w (:txn-write-concern opts)] (str " tw:" w))
+                       (when-let [r (:txn-read-concern opts)] (str " tr:" r))
+                       (when-let [r (:txn-read-concern opts)] (str " tr:" r))
+                       (when (:singleton-txns opts) " singleton-txns")
                        " " (str/join "," (map name (:nemesis opts))))
             :os   debian/os
             :db   db
@@ -88,7 +92,12 @@
      :validate [(partial every? #{:pause :kill :partition :clock :member})
                 "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
 
-   [nil "--max-writes-per-key NUM" "Maximum number of operations on any given key."
+   [nil "--max-txn-length NUM" "Maximum number of operations in a transaction."
+    :default  1
+    :parse-fn parse-long
+    :validate [pos? "Must be a positive integer"]]
+
+   [nil "--max-writes-per-key NUM" "Maximum number of writes to any given key."
     :default  200
     :parse-fn parse-long
     :validate [pos? "Must be a positive integer."]]
@@ -101,8 +110,20 @@
    [nil "--read-concern LEVEL" "What level of read concern to use."
     :default nil]
 
+   ;[nil "--shard-key KEY" "Either `id` or `value`"
+   ; :default :id
+   ; :parse-fn keyword
+   ; :validate [#{:id :value} "Must be either `id` or `value`"]]
+
+   [nil "--singleton-txns" "If set, execute even single operations in a transactional context."
+    :default false]
+
    [nil "--write-concern LEVEL" "What level of write concern to use."
-    :default nil]`
+    :default nil]
+
+   [nil "--txn-read-concern LEVEL" "What level of read concern should we use in transactions?"]
+
+   [nil "--txn-write-concern LEVEL" "What level of write concern should we use in transactions?"]
 
    ["-v" "--version STRING" "What version of MongoDB should we test?"
     :default "4.2.6"]
