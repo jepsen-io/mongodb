@@ -39,7 +39,7 @@
 (defn addr->node
   "Takes a node address like n1:27017 and returns just n1"
   [addr]
-  ((re-find #"(\w+):\d+" addr) 1))
+  ((re-find #"(.+):\d+" addr) 1))
 
 (defmacro with-block
   "Wrapper for the functional mongo Block interface"
@@ -205,13 +205,32 @@
          #"Timed out after \d+ ms while waiting to connect"
          (assoc ~op :type :fail, :error :connect-timeout)
 
-         (assoc ~op :type :info, :error :mongo-timeout)))
+         (assoc ~op :type :info, :error :mongo-timeout)
+
+         (throw e#)))
+
+     (catch com.mongodb.MongoWriteException e#
+       (condp re-find (.getMessage e#)
+         #"Not primary so we cannot begin or continue a transaction"
+         (assoc ~op :type :fail, :error :not-primary-cannot-txn)
+
+         (throw e#)))
 
      (catch com.mongodb.MongoCommandException e#
        (condp re-find (.getMessage e#)
          ; Huh, this is NOT, as it turns out, a determinate failure.
          #"TransactionCoordinatorSteppingDown"
          (assoc ~op :type :fail, :error :transaction-coordinator-stepping-down)
+
+         ; This can be the underlying cause of issues like "unable to
+         ; initialize targeter for write op for collection..."
+         ; These are ALSO apparently not... determinate failures?
+         #"Connection refused"
+         (assoc ~op :type :fail, :error :connection-refused)
+
+         ; Likewise
+         #"Connection reset by peer"
+         (assoc ~op :type :info, :error :connection-reset-by-peer)
 
          (throw e#)))
 

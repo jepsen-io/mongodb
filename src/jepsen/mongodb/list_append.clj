@@ -105,7 +105,7 @@
   (invoke! [this test op]
     (let [txn (:value op)]
       (c/with-errors op
-        ;(timeout 5000 (assoc op :type :info, :error :timeout)
+        (timeout 5000 (assoc op :type :info, :error :timeout)
           (let [txn' (if (and (<= (count txn) 1)
                               (not (:singleton-txns test)))
                        ; We can run without a transaction
@@ -124,7 +124,7 @@
                                                        test db session)
                                               (:value op)))]
                              (.withTransaction session body opts)))))]
-            (assoc op :type :ok, :value txn')))))
+            (assoc op :type :ok, :value txn'))))))
 
   (teardown! [this test])
 

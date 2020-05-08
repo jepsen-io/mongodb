@@ -1,14 +1,14 @@
 # jepsen.mongodb
 
-A Clojure library designed to ... well, that part is up to you.
+Tests for MongoDB.
 
 ## Usage
 
-FIXME
+lein run test-all -w list-append --nodes-file ~/nodes -r 100 --concurrency 3n --time-limit 300 --max-writes-per-key 128 --nemesis partition --read-concern majority --write-concern majority --txn-read-concern snapshot --txn-write-concern majority --test-count 40; and-bell
 
 ## License
 
-Copyright © 2020 FIXME
+Copyright © 2020 Jepsen, LLC
 
 This program and the accompanying materials are made available under the
 terms of the Eclipse Public License 2.0 which is available at

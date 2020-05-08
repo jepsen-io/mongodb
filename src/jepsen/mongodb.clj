@@ -55,8 +55,8 @@
                          :nodes     (:nodes opts)
                          :faults    (:nemesis opts)
                          :partition {:targets [:primaries :majority]}
-                         :pause     {:targets [nil :primaries :majority :all]}
-                         :kill      {:targets [nil :primaries :majority :all]}
+                         :pause     {:targets [nil :one :primaries :majority :all]}
+                         :kill      {:targets [nil :one :primaries :majority :all]}
                          :interval  2})]
     (merge tests/noop-test
            opts
@@ -64,7 +64,6 @@
                        (when-let [w (:write-concern opts)] (str " w:" w))
                        (when-let [r (:read-concern opts)] (str " r:" r))
                        (when-let [w (:txn-write-concern opts)] (str " tw:" w))
-                       (when-let [r (:txn-read-concern opts)] (str " tr:" r))
                        (when-let [r (:txn-read-concern opts)] (str " tr:" r))
                        (when (:singleton-txns opts) " singleton-txns")
                        " " (str/join "," (map name (:nemesis opts))))
@@ -93,7 +92,7 @@
                 "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
 
    [nil "--max-txn-length NUM" "Maximum number of operations in a transaction."
-    :default  1
+    :default  4
     :parse-fn parse-long
     :validate [pos? "Must be a positive integer"]]
 

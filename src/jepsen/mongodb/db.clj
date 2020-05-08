@@ -158,10 +158,14 @@
                     (map :name)
                     (map client/addr->node)
                     set))
-    (info :replica-set-status (with-out-str (->> (replica-set-status conn)
+    (info :replica-set-status
+          (with-out-str (->> (replica-set-status conn)
                                                  :members
                                                  (map :name)
-                                                 pprint)))
+                                                 (map client/addr->node)
+                                                 sort
+                                                 pprint)
+                        (prn :test (sort (:nodes test)))))
     (Thread/sleep 1000)))
 
 (defn await-primary
@@ -199,7 +203,7 @@
     ; from checking the replset status until *after* we initiate the replset on
     ; the primary--so we insert a barrier here to make sure other nodes don't
     ; wait until primary initiation is complete.
-    (jepsen/synchronize test)
+    (jepsen/synchronize test 300)
 
     ; For other reasons I don't understand, you *have* to open a new set of
     ; connections after replset initation. I have a hunch that this happens
@@ -216,7 +220,7 @@
       (await-primary conn)
 
       (info "Primary is" (primary conn))
-      (jepsen/synchronize test))))
+      (jepsen/synchronize test 300))))
 
 (defn replica-set-db
   "This database runs a single replica set."
@@ -368,7 +372,8 @@
 
   (teardown! [this test node]
     (stop-mongos! test node)
-    (c/exec :rm :-rf mongos-log-file mongos-dir))
+    (c/su
+      (c/exec :rm :-rf mongos-log-file mongos-dir)))
 
   db/LogFiles
   (log-files [this test node]

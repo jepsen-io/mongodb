@@ -7,4 +7,5 @@
                  [jepsen "0.1.19-SNAPSHOT"]
                  [org.mongodb/mongodb-driver-sync "4.0.2"]]
   :main jepsen.mongodb
+  :jvm-opts ["-Djava.awt.headless=true"]
   :repl-options {:init-ns jepsen.mongodb})
