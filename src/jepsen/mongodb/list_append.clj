@@ -135,6 +135,7 @@
   "A generator, client, and checker for a list-append test."
   [opts]
   (assoc (list-append/test {:key-count          10
+                            :key-dist           :exponential
                             :max-txn-length     (:max-txn-length opts 4)
                             :max-writes-per-key (:max-writes-per-key opts)
                             :consistency-models [:strong-snapshot-isolation]})

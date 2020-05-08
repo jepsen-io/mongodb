@@ -209,10 +209,16 @@
 
          (throw e#)))
 
+     (catch com.mongodb.MongoExecutionTimeoutException e#
+       (assoc ~op :type :info, :error :mongo-execution-timeout))
+
      (catch com.mongodb.MongoWriteException e#
        (condp re-find (.getMessage e#)
          #"Not primary so we cannot begin or continue a transaction"
          (assoc ~op :type :fail, :error :not-primary-cannot-txn)
+
+         #"Could not find host matching read preference"
+         (assoc ~op :type :fail, :error :no-host-matching-read-preference)
 
          (throw e#)))
 
@@ -220,13 +226,13 @@
        (condp re-find (.getMessage e#)
          ; Huh, this is NOT, as it turns out, a determinate failure.
          #"TransactionCoordinatorSteppingDown"
-         (assoc ~op :type :fail, :error :transaction-coordinator-stepping-down)
+         (assoc ~op :type :info, :error :transaction-coordinator-stepping-down)
 
          ; This can be the underlying cause of issues like "unable to
          ; initialize targeter for write op for collection..."
          ; These are ALSO apparently not... determinate failures?
          #"Connection refused"
-         (assoc ~op :type :fail, :error :connection-refused)
+         (assoc ~op :type :info, :error :connection-refused)
 
          ; Likewise
          #"Connection reset by peer"
@@ -244,6 +250,9 @@
 
      (catch com.mongodb.MongoQueryException e#
        (condp re-find (.getMessage e#)
+         #"Could not find host matching read preference"
+         (assoc ~op :type :fail, :error :no-host-matching-read-preference)
+
          #"code 251" (assoc ~op :type :fail, :error :transaction-aborted)
 
          ; Why are there two ways to report this?

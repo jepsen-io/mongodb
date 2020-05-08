@@ -54,10 +54,10 @@
                         {:db        db
                          :nodes     (:nodes opts)
                          :faults    (:nemesis opts)
-                         :partition {:targets [:primaries :majority]}
+                         :partition {:targets [:primaries]}
                          :pause     {:targets [nil :one :primaries :majority :all]}
                          :kill      {:targets [nil :one :primaries :majority :all]}
-                         :interval  2})]
+                         :interval  (:nemesis-interval opts)})]
     (merge tests/noop-test
            opts
            {:name (str "mongodb " (name workload-name)
@@ -97,8 +97,13 @@
     :validate [pos? "Must be a positive integer"]]
 
    [nil "--max-writes-per-key NUM" "Maximum number of writes to any given key."
-    :default  200
+    :default  256
     :parse-fn parse-long
+    :validate [pos? "Must be a positive integer."]]
+
+   [nil "--nemesis-interval SECS" "Roughly how long between nemesis operations."
+    :default 2
+    :parse-fn read-string
     :validate [pos? "Must be a positive integer."]]
 
    ["-r" "--rate HZ" "Approximate number of requests per second, total"
