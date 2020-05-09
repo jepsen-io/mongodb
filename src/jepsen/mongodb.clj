@@ -106,8 +106,11 @@
     :parse-fn read-string
     :validate [pos? "Must be a positive integer."]]
 
+   [nil "--no-read-only-txn-write-concern" "Don't set write concern on read-only transactions"
+    :default false]
+
    ["-r" "--rate HZ" "Approximate number of requests per second, total"
-    :default 100
+    :default 1000
     :parse-fn read-string
     :validate [#(and (number? %) (pos? %)) "Must be a positive number"]]
 

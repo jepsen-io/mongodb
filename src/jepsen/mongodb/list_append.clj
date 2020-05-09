@@ -24,7 +24,7 @@
 
 (defn txn-options
   "Constructs options for this transaction."
-  [test]
+  [test txn]
   ; Transactions retry for well over 100 seconds and I cannot for the life of
   ; me find what switch makes that timeout shorter. MaxCommitTime only affects
   ; a *single* invocation of the transaction, not the retries. We work around
@@ -39,11 +39,15 @@
     (:txn-read-concern test)
     (.readConcern (c/read-concern (:txn-read-concern test)))
 
-    (:txn-write-concern test)
+    (and (:txn-write-concern test)
+         ; If the transaction is read-only, and we have
+         ; no-read-only-txn-write-concern set, we don't bother setting the write
+         ; concern.
+         (not (and (every? (comp #{:r} first) txn)
+                   (:no-read-only-txn-write-concern test))))
     (.writeConcern (c/write-concern (:txn-write-concern test)))
 
     true .build))
-
 
 (defn apply-mop!
   "Applies a transactional micro-operation to a connection."
@@ -117,7 +121,7 @@
                        ; We need a transaction
                        (let [db (c/db conn db-name test)]
                          (with-open [session (c/start-session conn)]
-                           (let [opts (txn-options test)
+                           (let [opts (txn-options test (:value op))
                                  body (c/txn
                                         ;(info :txn-begins)
                                         (mapv (partial apply-mop!
