@@ -35,20 +35,34 @@
     ; TODO: sort out the 4.2 in the URL here
     (str "https://repo.mongodb.org/apt/debian/dists/stretch/mongodb-org/4.2/main/binary-amd64/mongodb-org-" subpackage "_" version "_amd64.deb")))
 
+
 (defn install!
-  [test]
   "Installs MongoDB on the current node."
+  [test]
   (c/su
-    (c/exec :mkdir :-p "/tmp/jepsen")
-    (c/cd "/tmp/jepsen"
-          (doseq [subpackage subpackages]
-            (when-not (= (:version test)
-                         (debian/installed-version (str "mongodb-org-"
-                                                        subpackage)))
-              (let [file (cu/wget! (deb-url test subpackage))]
-                (info "Installing" subpackage (:version test))
-                (c/exec :dpkg :-i :--force-confnew file))
-              (c/exec :systemctl :daemon-reload))))))
+   (c/exec :mkdir :-p "/tmp/jepsen")
+   (let [version (:version test)
+         m-version (str/join "." (butlast (str/split "4.2.x" #"\.")))
+         versioner #(keyword (str "mongodb-" %1 "=" version))]
+     (c/exec :apt-get :install :gnupg)
+     (c/exec :wget :-qO :-
+             (str "https://www.mongodb.org/static/pgp/server-" m-version ".asc")
+             :| :apt-key :add :-)
+     (c/exec :echo (str "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu bionic/mongodb-org/"
+                        m-version
+                        " multiverse")
+             :|
+             :tee
+             (str "/etc/apt/sources.list.d/mongodb-org-"
+                  m-version
+                  ".list"))
+     (c/exec :apt-get :update)
+     (c/exec :apt-get :install :-y
+             (versioner "org")
+             (versioner "org-server")
+             (versioner "org-shell")
+             (versioner "org-mongos"))
+     (c/exec :systemctl :daemon-reload))))
 
 (defn config-server?
   "Takes a test map, and returns true iff this set of nodes is intended to be a
