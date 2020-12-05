@@ -8,7 +8,7 @@
                     [tests :as tests]
                     [util :as util :refer [parse-long]]]
             [jepsen.os.debian :as debian]
-            [jepsen.generator.pure :as gen]
+            [jepsen.generator :as gen]
             [jepsen.mongodb [db :as db]
                             [list-append :as list-append]
                             [nemesis :as nemesis]]))
@@ -82,7 +82,8 @@
                          (->> (:generator workload)
                               (gen/stagger (/ (:rate opts)))
                               (gen/nemesis (:generator nemesis))
-                              (gen/time-limit (:time-limit opts))))})))
+                              (gen/time-limit (:time-limit opts))))
+            :pure-generators true})))
 
 (def cli-opts
   "Additional CLI options"

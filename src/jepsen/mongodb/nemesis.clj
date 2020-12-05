@@ -6,7 +6,7 @@
             [jepsen [nemesis :as n]
                     [net :as net]
                     [util :as util]]
-            [jepsen.generator.pure :as gen]
+            [jepsen.generator :as gen]
             [jepsen.nemesis [combined :as nc]
                             [time :as nt]]
             [jepsen.mongodb.db :as db]))
