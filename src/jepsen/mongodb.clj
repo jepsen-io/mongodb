@@ -8,7 +8,7 @@
                     [tests :as tests]
                     [util :as util :refer [parse-long]]]
             [jepsen.os.debian :as debian]
-            [jepsen.generator.pure :as gen]
+            [jepsen.generator :as gen]
             [jepsen.mongodb [db :as db]
                             [list-append :as list-append]
                             [nemesis :as nemesis]]))
@@ -43,6 +43,12 @@
        (map keyword)
        (mapcat #(get special-nemeses % [%]))))
 
+(def logging-overrides
+  "Custom log levels; Mongo's driver is... communicative"
+  {"jepsen.mongodb.client"          :error
+   "org.mongodb.driver.cluster"     :error
+   "org.mongodb.driver.connection"  :error})
+
 (defn mongodb-test
   "Given an options map from the command line runner (e.g. :nodes, :ssh,
   :concurrency, ...), constructs a test map."
@@ -67,6 +73,8 @@
                        (when-let [r (:txn-read-concern opts)] (str " tr:" r))
                        (when (:singleton-txns opts) " singleton-txns")
                        " " (str/join "," (map name (:nemesis opts))))
+            :pure-generators true
+            :logging {:overrides logging-overrides}
             :os   debian/os
             :db   db
             :checker (checker/compose

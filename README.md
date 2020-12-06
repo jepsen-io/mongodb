@@ -1,6 +1,7 @@
 # jepsen.mongodb
 
-Tests for MongoDB.
+Tests for MongoDB, running on Debian Buster. You want 9 nodes for multi-shard
+tests: 3 for the config replica set, and 3 for each of 2 shards.
 
 ## Usage
 

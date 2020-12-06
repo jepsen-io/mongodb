@@ -72,7 +72,7 @@
 (defn await-open
   "Blocks until (open node) succeeds. Helpful for initial cluster setup."
   [node port]
-  (timeout 30000
+  (timeout 120000
            (throw+ {:type ::timed-out-awaiting-connection
                     :node node
                     :port port})

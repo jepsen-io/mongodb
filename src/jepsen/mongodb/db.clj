@@ -33,7 +33,7 @@
   [test subpackage]
   (let [version (:version test)]
     ; TODO: sort out the 4.2 in the URL here
-    (str "https://repo.mongodb.org/apt/debian/dists/stretch/mongodb-org/4.2/main/binary-amd64/mongodb-org-" subpackage "_" version "_amd64.deb")))
+    (str "https://repo.mongodb.org/apt/debian/dists/buster/mongodb-org/4.2/main/binary-amd64/mongodb-org-" subpackage "_" version "_amd64.deb")))
 
 (defn install!
   [test]
@@ -72,11 +72,13 @@
 (defn start!
   "Starts mongod"
   [test node]
+  (info "Starting mongod")
   (c/su (c/exec :systemctl :start :mongod)))
 
 (defn stop!
   "Stops the mongodb service"
   [test node]
+  (info "Stopping mongod")
   (try+
     (c/su (c/exec :systemctl :stop :mongod))
     (catch [:exit 5] e
@@ -182,7 +184,7 @@
                client/shard-port)]
     ; Wait for all nodes to be reachable
     (.close (client/await-open node port))
-    (jepsen/synchronize test)
+    (jepsen/synchronize test 300)
 
     ; Start RS
     (when (= node (jepsen/primary test))

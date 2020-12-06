@@ -6,7 +6,6 @@
             [jepsen [client :as client]
                     [checker :as checker]
                     [util :as util :refer [timeout]]]
-            [jepsen.generator.pure :as gen]
             [jepsen.tests.cycle :as cycle]
             [jepsen.tests.cycle.append :as list-append]
             [jepsen.mongodb [client :as c]]

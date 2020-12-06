@@ -6,7 +6,7 @@
             [jepsen [nemesis :as n]
                     [net :as net]
                     [util :as util]]
-            [jepsen.generator.pure :as gen]
+            [jepsen.generator :as gen]
             [jepsen.nemesis [combined :as nc]
                             [time :as nt]]
             [jepsen.mongodb.db :as db]))
@@ -30,10 +30,11 @@
   [packages]
   (reify n/Nemesis
     (setup! [this test]
-      (real-pmap (fn [pkg]
-                   (n/setup! (:nemesis pkg)
-                             (db/test-for-shard test pkg)))
-                 packages))
+      (shard-nemesis
+        (real-pmap (fn [pkg]
+                     (update pkg :nemesis
+                             n/setup! (db/test-for-shard test pkg)))
+                   packages)))
 
     (invoke! [this test op]
       (let [shard-name (:shard op)
