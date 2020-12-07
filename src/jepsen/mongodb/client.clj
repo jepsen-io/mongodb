@@ -87,8 +87,11 @@
                          (.close conn)
                          (throw t))))
                    (catch com.mongodb.MongoTimeoutException e
-                     (info "Mongo timeout while waiting for conn; retrying. "
+                     (info "Mongo timeout while waiting for conn; retrying."
                            (.getMessage e))
+                     nil)
+                   (catch com.mongodb.MongoNodeIsRecoveringException e
+                     (info "Node is recovering; retrying." (.getMessage e))
                      nil)
                    (catch com.mongodb.MongoSocketReadTimeoutException e
                      (info "Mongo socket read timeout waiting for conn; retrying")
