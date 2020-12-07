@@ -220,8 +220,11 @@
          #"Not primary so we cannot begin or continue a transaction"
          (assoc ~op :type :fail, :error :not-primary-cannot-txn)
 
+         ; This LOOKS like it ought to be a definite failure, but it's not!
+         ; Write transactions can throw this but actually succeed. I'm calling
+         ; it info for now.
          #"Could not find host matching read preference"
-         (assoc ~op :type :fail, :error :no-host-matching-read-preference)
+         (assoc ~op :type :info, :error :no-host-matching-read-preference)
 
          (throw e#)))
 
