@@ -90,7 +90,8 @@
                          (->> (:generator workload)
                               (gen/stagger (/ (:rate opts)))
                               (gen/nemesis (:generator nemesis))
-                              (gen/time-limit (:time-limit opts))))})))
+                              (gen/time-limit (:time-limit opts))))
+            :pure-generators true})))
 
 (def cli-opts
   "Additional CLI options"
