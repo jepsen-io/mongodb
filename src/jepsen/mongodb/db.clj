@@ -384,7 +384,7 @@
 (defrecord ShardedDB [mongos shards tcpdump]
   db/DB
   (setup! [this test node]
-    (db/setup! tcpdump test node)
+    ;(db/setup! tcpdump test node)
     (let [shard (shard-for-node this node)]
       (info "Setting up shard" shard)
       (db/setup! (:db shard) (test-for-shard test shard) node))
@@ -396,11 +396,12 @@
     (let [shard (shard-for-node this node)]
       (info "Tearing down shard" shard)
       (db/teardown! (:db shard) (test-for-shard test shard) node))
-    (db/teardown! tcpdump test node))
+    ;(db/teardown! tcpdump test node)
+    )
 
   db/LogFiles
   (log-files [this test node]
-    (concat (db/log-files tcpdump test node)
+    (concat ;(db/log-files tcpdump test node)
             (db/log-files mongos test node)
             (let [shard (shard-for-node this node)]
               (db/log-files (:db shard) (test-for-shard test shard) node))))
