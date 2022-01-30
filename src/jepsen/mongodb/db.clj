@@ -241,6 +241,7 @@
 
     db/LogFiles
     (log-files [db test node]
+      (c/su (c/exec :chmod :-r :a+r log-file))
       [log-file])
 
     db/Process
@@ -379,6 +380,7 @@
 
   db/LogFiles
   (log-files [this test node]
+    (c/su (c/exec :chmod :-r :a+r mongos-log-file))
     [mongos-log-file]))
 
 (defrecord ShardedDB [mongos shards tcpdump]
