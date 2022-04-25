@@ -46,6 +46,7 @@
 (def logging-overrides
   "Custom log levels; Mongo's driver is... communicative"
   {"jepsen.mongodb.client"          :error
+   "org.mongodb.driver.client"      :error
    "org.mongodb.driver.cluster"     :error
    "org.mongodb.driver.connection"  :error})
 
@@ -141,7 +142,7 @@
    [nil "--txn-write-concern LEVEL" "What level of write concern should we use in transactions?"]
 
    ["-v" "--version STRING" "What version of MongoDB should we test?"
-    :default "4.2.8"]
+    :default "4.4.9"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword

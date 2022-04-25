@@ -49,7 +49,7 @@
        ~@body)))
 
 ;; Connection management
-(defn open
+(defn ^MongoClient open
   "Opens a connection to a node."
   [node port]
   (MongoClients/create
@@ -69,36 +69,50 @@
                                              (maxWaitTime 1 TimeUnit/SECONDS))))
         build)))
 
-(defn await-open
-  "Blocks until (open node) succeeds. Helpful for initial cluster setup."
-  [node port]
-  (timeout 120000
-           (throw+ {:type ::timed-out-awaiting-connection
+(declare ping)
+
+(defn ^MongoClient await-open*
+  "Blocks until (open node) succeeds, and optionally pings."
+  [node port ping?]
+  (util/await-fn
+    (fn conn []
+      (try+
+        (let [conn (open node port)]
+          (try
+            (when ping?
+              ;(.first (.listDatabaseNames conn))
+              (ping conn))
+            conn
+            ; Don't leak clients when they fail
+            (catch Throwable t
+              (.close conn)
+              (throw t))))
+        (catch com.mongodb.MongoTimeoutException e
+          (info "Mongo timeout while waiting for conn; retrying."
+                (.getMessage e))
+          (throw+ {:type ::timed-out-awaiting-connection
+                   :node node
+                   :port port}))
+        (catch com.mongodb.MongoNodeIsRecoveringException e
+          (info "Node is recovering; retrying." (.getMessage e))
+          (throw+ {:type :node-recovering-awaiting-connection
+                   :node node
+                   :port port}))
+        (catch com.mongodb.MongoSocketReadTimeoutException e
+          (info "Mongo socket read timeout waiting for conn; retrying")
+          (throw+ {:type :mongo-read-timeout-awaiting-connection
                     :node node
-                    :port port})
-           (loop []
-             (or (try
-                   (let [conn (open node port)]
-                     (try
-                       (.first (.listDatabaseNames conn))
-                       conn
-                       ; Don't leak clients when they fail
-                       (catch Throwable t
-                         (.close conn)
-                         (throw t))))
-                   (catch com.mongodb.MongoTimeoutException e
-                     (info "Mongo timeout while waiting for conn; retrying."
-                           (.getMessage e))
-                     nil)
-                   (catch com.mongodb.MongoNodeIsRecoveringException e
-                     (info "Node is recovering; retrying." (.getMessage e))
-                     nil)
-                   (catch com.mongodb.MongoSocketReadTimeoutException e
-                     (info "Mongo socket read timeout waiting for conn; retrying")
-                     nil))
-                 ; If we aren't ready, sleep and retry
-                 (do (Thread/sleep 1000)
-                     (recur))))))
+                    :port port}))))
+    {:retry-interval 1000
+     :log-interval   10000
+     :log-message    (str "Waiting for " node ":" port " to be available")
+     :timeout        300000}))
+
+(defn ^MongoClient await-open
+  "Blocks until (open node) succeeds and the server responds to ping. Helpful
+  for initial cluster setup."
+  [node port]
+  (await-open* node port true))
 
 ; Basic plumbing
 (defprotocol ToDoc
@@ -318,6 +332,11 @@
   "Runs a command on the admin database."
   [conn cmd]
   (command! (db conn "admin") cmd))
+
+(defn ping
+  "Pings the server with a default database."
+  [conn]
+  (admin-command! conn {:ping 1}))
 
 (defn find-one
   "Find a document by ID. If a session is provided, will use that session

@@ -9,7 +9,8 @@
                     [core :as jepsen]
                     [db :as db]
                     [util :as util :refer [meh random-nonempty-subset]]]
-            [jepsen.control.util :as cu]
+            [jepsen.control [net :as cn]
+                            [util :as cu]]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb [client :as client]]
             [slingshot.slingshot :refer [try+ throw+]]))
@@ -31,9 +32,13 @@
 (defn deb-url
   "What's the URL of the Debian package we install?"
   [test subpackage]
-  (let [version (:version test)]
-    ; TODO: sort out the 4.2 in the URL here
-    (str "https://repo.mongodb.org/apt/debian/dists/buster/mongodb-org/4.2/main/binary-amd64/mongodb-org-" subpackage "_" version "_amd64.deb")))
+  (let [version       (:version test)
+        ; Mongo puts a "4.2" in the URL for "4.2.1", so we have to compute that
+        ; too
+        small-version (re-find #"^\d+\.\d+" version)]
+    (str "https://repo.mongodb.org/apt/debian/dists/buster/mongodb-org/"
+         small-version "/main/binary-amd64/mongodb-org-" subpackage "_"
+         version "_amd64.deb")))
 
 (defn install!
   [test]
@@ -62,6 +67,7 @@
   (c/su
     (c/exec :echo :> "/etc/mongod.conf"
             (-> (slurp (io/resource "mongod.conf"))
+                (str/replace "%IP%" (cn/ip node))
                 (str/replace "%REPL_SET_NAME%"
                              (:replica-set-name test "rs_jepsen"))
                 (str/replace "%CLUSTER_ROLE%"
@@ -241,7 +247,8 @@
 
     db/LogFiles
     (log-files [db test node]
-      (c/su (c/exec :chmod :a+r log-file))
+      ; This might fail if the log file doesn't exist
+      (c/su (meh (c/exec :chmod :a+r log-file)))
       [log-file])
 
     db/Process
@@ -334,6 +341,7 @@
   (c/su
     (c/exec :echo :> "/etc/mongos.conf"
             (-> (slurp (io/resource "mongos.conf"))
+                (str/replace "%IP%" (cn/ip node))
                 (str/replace "%CONFIG_DB%" config-db)))))
 
 (defn start-mongos!
@@ -380,7 +388,8 @@
 
   db/LogFiles
   (log-files [this test node]
-    (c/su (c/exec :chmod :a+r mongos-log-file))
+    ; This might fail if the log file doesn't exist
+    (c/su (meh (c/exec :chmod :a+r mongos-log-file)))
     [mongos-log-file]))
 
 (defrecord ShardedDB [mongos shards tcpdump]
