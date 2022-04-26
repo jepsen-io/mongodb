@@ -180,7 +180,8 @@
       "acknowledged"    WriteConcern/ACKNOWLEDGED
       "journaled"       WriteConcern/JOURNALED
       "majority"        WriteConcern/MAJORITY
-      "unacknowledged"  WriteConcern/UNACKNOWLEDGED)))
+      "unacknowledged"  WriteConcern/UNACKNOWLEDGED
+                        (WriteConcern. (Integer/parseInt wc)))))
 
 (defn read-concern
   "Turns a named (e.g. :majority, \"majority\" into a ReadConcern."
@@ -192,7 +193,8 @@
       "linearizable"    ReadConcern/LINEARIZABLE
       "local"           ReadConcern/LOCAL
       "majority"        ReadConcern/MAJORITY
-      "snapshot"        ReadConcern/SNAPSHOT)))
+      "snapshot"        ReadConcern/SNAPSHOT
+      (ReadConcern. (Integer/parseInt rc)))))
 
 (defn transactionless-read-concern
   "Read concern SNAPSHOT isn't supported outside transactions; we weaken it to
