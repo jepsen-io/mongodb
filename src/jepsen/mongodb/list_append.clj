@@ -141,5 +141,6 @@
                             :key-dist           :exponential
                             :max-txn-length     (:max-txn-length opts 4)
                             :max-writes-per-key (:max-writes-per-key opts)
-                            :consistency-models [:strong-snapshot-isolation]})
+                            :consistency-models [:strong-snapshot-isolation]
+                            :cycle-search-timeout 30000})
          :client (Client. nil)))

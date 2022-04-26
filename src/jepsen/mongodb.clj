@@ -67,7 +67,8 @@
                          :interval  (:nemesis-interval opts)})]
     (merge tests/noop-test
            opts
-           {:name (str "mongodb " (name workload-name)
+           {:name (str "mongodb " (:version opts)
+                       " " (name workload-name)
                        (when-let [w (:write-concern opts)] (str " w:" w))
                        (when-let [r (:read-concern opts)] (str " r:" r))
                        (when-let [w (:txn-write-concern opts)] (str " tw:" w))
