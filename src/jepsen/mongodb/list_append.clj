@@ -73,34 +73,38 @@
 (defrecord Client [conn]
   client/Client
   (open! [this test node]
-    (assoc this :conn (c/open node c/mongos-port)))
+    (assoc this :conn (c/open node (if (:sharded test)
+                                     c/mongos-port
+                                     c/shard-port))))
 
   (setup! [this test]
     ; Collections have to be predeclared; transactions can't create them.
     (with-retry [tries 5]
-      (let [db   (c/db conn db-name test)]
-        ; Shard database
-        (c/admin-command! conn {:enableSharding db-name})
+      (let [db (c/db conn db-name test)]
+        (when (:sharded test)
+          (c/admin-command! conn {:enableSharding db-name}))
+
         (let [coll (c/create-collection! db coll-name)]
           (info "Collection created")
-          ; Shard it!
-          (c/admin-command! conn
-                            {:shardCollection  (str db-name "." coll-name)
-                             :key              {:_id :hashed}
-                             ; WIP; gotta figure out how we're going to
-                             ; generate queries with the shard key in them.
-                             ;:key              {(case (:shard-key test)
-                             ;                     :id :_id
-                             ;                     :value :value)
-                             ;                   :hashed}
-                             :numInitialChunks 7})
-          (info "Collection sharded")))
+          (when (:sharded test)
+            ; Shard it!
+            (c/admin-command! conn
+                              {:shardCollection  (str db-name "." coll-name)
+                               :key              {:_id :hashed}
+                               ; WIP; gotta figure out how we're going to
+                               ; generate queries with the shard key in them.
+                               ;:key              {(case (:shard-key test)
+                               ;                     :id :_id
+                               ;                     :value :value)
+                               ;                   :hashed}
+                               :numInitialChunks 7})
+            (info "Collection sharded"))))
       (catch com.mongodb.MongoNotPrimaryException e
         ; sigh, why is this a thing
         nil)
       (catch com.mongodb.MongoSocketReadTimeoutException e
         (if (pos? tries)
-          (do (info "Timed out sharding DB and collection; waiting to retry")
+          (do (info "Timed out sharding DB and creating collection; waiting to retry")
               (Thread/sleep 5000)
               (retry (dec tries)))
           (throw e)))))
@@ -139,6 +143,7 @@
   [opts]
   (assoc (list-append/test {:key-count          10
                             :key-dist           :exponential
+                            ;:key-dist           :uniform
                             :max-txn-length     (:max-txn-length opts 4)
                             :max-writes-per-key (:max-writes-per-key opts)
                             :consistency-models [:strong-snapshot-isolation]

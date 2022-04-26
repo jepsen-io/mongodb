@@ -61,11 +61,10 @@
   (merge shard
          (nc/nemesis-package (assoc opts :db (:db shard)))))
 
-(defn nemesis-package
-  "Constructs a nemesis and generators for MongoDB."
+(defn sharded-nemesis-package
+  "Constructs a nemesis and generators for a sharded MongoDB."
   [opts]
-  (let [opts (update opts :faults set)
-        ; Construct a package for each shard
+  (let [; Construct a package for each shard
         pkgs (map (partial package-for-shard opts) (:shards (:db opts)))]
 
     ; Now, we need a generator and nemesis which mix operations on various
@@ -80,3 +79,11 @@
     ; TODO: mix these
     ;(nc/nemesis-package)
     )
+
+(defn nemesis-package
+  "Constructs a nemesis and generators for MongoDB based on CLI options."
+  [opts]
+  (let [opts (update opts :faults set)]
+    (if (:sharded opts)
+      (sharded-nemesis-package opts)
+      (nc/nemesis-package opts))))

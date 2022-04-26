@@ -265,8 +265,10 @@
      (catch com.mongodb.MongoClientException e#
        (condp re-find (.getMessage e#)
          ; This... seems like a bug too
+         ; Can also happen when connecting to a hidden replica
          #"Sessions are not supported by the MongoDB cluster to which this client is connected"
-         (assoc ~op :type :fail, :error :sessions-not-supported-by-cluster)
+         (do (Thread/sleep 5000)
+             (assoc ~op :type :fail, :error :sessions-not-supported-by-cluster))
 
          (throw e#)))
 
@@ -281,8 +283,14 @@
          #"code 10107 " (assoc ~op :type :fail, :error :not-primary-2)
 
          #"code 13436 " (assoc ~op :type :fail, :error :not-primary-or-recovering)
-         (throw e#)
-         ))))
+         (throw e#)))
+
+     (catch com.mongodb.internal.connection.MongoWriteConcernWithResponseException e#
+       (condp re-find (.getMessage e#)
+         #"InterruptedDueToReplStateChange"
+         (assoc ~op :type :fail, :error :interrupted-due-to-repl-state-change)
+         (throw e#)))
+     ))
 
 (defn ^MongoDatabase db
   "Get a DB from a connection. Options may include

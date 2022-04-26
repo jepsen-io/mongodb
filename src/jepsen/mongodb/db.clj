@@ -101,22 +101,30 @@
 (defn target-replica-set-config
   "Generates the config for a replset in a given test."
   [test]
-  {:_id (:replica-set-name test "rs_jepsen")
-   :configsvr (config-server? test)
-   ; See https://docs.mongodb.com/manual/reference/replica-configuration/#rsconf.settings.catchUpTimeoutMillis
-   :settings {:heartbeatTimeoutSecs       1
-              :electionTimeoutMillis      1000
-              :catchUpTimeoutMillis       1000
-              :catchUpTakeoverDelayMillis 3000}
-   :members (->> test
-                 :nodes
-                 (map-indexed (fn [i node]
-                                {:_id  i
-                                 :priority (- (count (:nodes test)) i)
-                                 :host     (str node ":"
-                                                (if (config-server? test)
-                                                  client/config-port
-                                                  client/shard-port))})))})
+  (let [; Set aside some nodes as hidden replicas
+        [hidden normal] (->> (:nodes test)
+                             reverse
+                             (split-at (:hidden test))
+                             (map set))]
+    {:_id (:replica-set-name test "rs_jepsen")
+     :configsvr (config-server? test)
+     ; See https://docs.mongodb.com/manual/reference/replica-configuration/#rsconf.settings.catchUpTimeoutMillis
+     :settings {:heartbeatTimeoutSecs       1
+                :electionTimeoutMillis      1000
+                :catchUpTimeoutMillis       1000
+                :catchUpTakeoverDelayMillis 3000}
+     :members (->> test
+                   :nodes
+                   (map-indexed (fn [i node]
+                                  {:_id  i
+                                   :priority (if (hidden node)
+                                               0
+                                               (- (count (:nodes test)) i))
+                                   :hidden   (boolean (hidden node))
+                                   :host     (str node ":"
+                                                  (if (config-server? test)
+                                                    client/config-port
+                                                    client/shard-port))})))}))
 
 (defn replica-set-initiate!
   "Initialize a replica set on a node."
@@ -472,3 +480,13 @@
 
       (db/tcpdump {:filter "host 192.168.122.1"
                    :ports  [client/mongos-port]}))))
+
+(defn db
+  "Constructs a MongoDB DB based on CLI options.
+
+    :sharded     If set, deploys a sharded cluster with a config replica set
+                 and n shards."
+  [opts]
+  (if (:sharded opts)
+    (sharded-db opts)
+    (replica-set-db)))

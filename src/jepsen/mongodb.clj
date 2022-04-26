@@ -56,9 +56,10 @@
   [opts]
   (let [workload-name (:workload opts)
         workload      ((workloads workload-name) opts)
-        db            (db/sharded-db opts)
+        db            (db/db opts)
         nemesis       (nemesis/nemesis-package
                         {:db        db
+                         :sharded   (:sharded opts)
                          :nodes     (:nodes opts)
                          :faults    (:nemesis opts)
                          :partition {:targets [:primaries]}
@@ -96,7 +97,12 @@
 
 (def cli-opts
   "Additional CLI options"
-  [[nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
+  [[nil "--hidden NUM" "Number of hidden replicas per replica set."
+    :parse-fn parse-long
+    :default  0
+    :validate [(complement neg?) "Must be non-negative"]]
+
+   [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
      :parse-fn parse-nemesis-spec
      :validate [(partial every? #{:pause :kill :partition :clock :member})
                 "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
@@ -127,6 +133,9 @@
    [nil "--read-concern LEVEL" "What level of read concern to use."
     :default nil]
 
+   [nil "--sharded" "If set, set up a multi-shard MongoDB fronted by Mongos."
+    :default false]
+
    ;[nil "--shard-key KEY" "Either `id` or `value`"
    ; :default :id
    ; :parse-fn keyword
@@ -134,9 +143,6 @@
 
    [nil "--singleton-txns" "If set, execute even single operations in a transactional context."
     :default false]
-
-   [nil "--write-concern LEVEL" "What level of write concern to use."
-    :default nil]
 
    [nil "--txn-read-concern LEVEL" "What level of read concern should we use in transactions?"]
 
@@ -148,6 +154,9 @@
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword
     :validate [workloads (cli/one-of workloads)]]
+
+   [nil "--write-concern LEVEL" "What level of write concern to use."
+    :default nil]
    ])
 
 (defn all-test-options
