@@ -173,7 +173,8 @@
 
 ;; Write Concerns
 (defn write-concern
-  "Turns a named (e.g. :majority, \"majority\") into a WriteConcern."
+  "Turns a named (e.g. :majority, \"majority\") into a WriteConcern. For
+  integer strings like \"2\" we convert them to a journaled WriteConcern."
   [wc]
   (when wc
     (case (name wc)
@@ -181,7 +182,8 @@
       "journaled"       WriteConcern/JOURNALED
       "majority"        WriteConcern/MAJORITY
       "unacknowledged"  WriteConcern/UNACKNOWLEDGED
-                        (WriteConcern. (Integer/parseInt wc)))))
+                        (.. (WriteConcern. (Integer/parseInt wc))
+                            (withJournal true)))))
 
 (defn read-concern
   "Turns a named (e.g. :majority, \"majority\" into a ReadConcern."
