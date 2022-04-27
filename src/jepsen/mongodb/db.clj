@@ -120,6 +120,9 @@
                                    :priority (if (hidden node)
                                                0
                                                (- (count (:nodes test)) i))
+                                   :votes    (if (hidden node)
+                                               0
+                                               1)
                                    :hidden   (boolean (hidden node))
                                    :host     (str node ":"
                                                   (if (config-server? test)

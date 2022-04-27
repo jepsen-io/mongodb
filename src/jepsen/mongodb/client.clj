@@ -224,7 +224,8 @@
          #"Timed out after \d+ ms while waiting to connect"
          (assoc ~op :type :fail, :error :connect-timeout)
 
-         (assoc ~op :type :info, :error :mongo-timeout)
+         ; What was this message?
+         ;(assoc ~op :type :info, :error :mongo-timeout)
 
          (throw e#)))
 
