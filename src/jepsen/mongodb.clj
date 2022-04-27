@@ -28,6 +28,9 @@
 (def all-nemeses
   "Combinations of nemeses for tests"
   [[]
+   [:partition]
+   [:kill]
+   [:pause]
    [:pause :kill :partition :clock :member]])
 
 (def special-nemeses
