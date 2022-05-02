@@ -9,8 +9,14 @@
            (java.util.concurrent TimeUnit)
            (com.mongodb Block
                         ConnectionString
+                        MongoClientException
                         MongoClientSettings
                         MongoClientSettings$Builder
+                        MongoConnectionPoolClearedException
+                        MongoQueryException
+                        MongoSocketReadException
+                        MongoSocketReadTimeoutException
+                        MongoTimeoutException
                         ServerAddress
                         WriteConcern
                         ReadConcern
@@ -28,6 +34,8 @@
                                      Updates
                                      UpdateOptions)
            (com.mongodb.client.result UpdateResult)
+           (com.mongodb.internal.connection
+             MongoWriteConcernWithResponseException)
            (com.mongodb.session ClientSession)
            (org.bson Document)))
 
@@ -219,13 +227,21 @@
   when a throw occurs in body."
   [op & body]
   `(try ~@body
+     (catch MongoConnectionPoolClearedException e#
+       (assoc ~op :type :fail, :error [:connection-pool-cleared
+                                       (.getMessage e#)]))
+
      (catch com.mongodb.MongoNotPrimaryException e#
        (assoc ~op :type :fail, :error :not-primary))
 
      (catch com.mongodb.MongoNodeIsRecoveringException e#
        (assoc ~op :type :fail, :error :node-recovering))
 
-     (catch com.mongodb.MongoSocketReadTimeoutException e#
+     (catch MongoSocketReadException e#
+       (assoc ~op :type :info, :error [:socket-read-exception
+                                       (.getMessage e#)]))
+
+     (catch MongoSocketReadTimeoutException e#
        (assoc ~op :type :info, :error :socket-read-timeout))
 
      (catch com.mongodb.MongoTimeoutException e#
@@ -272,7 +288,7 @@
 
          (throw e#)))
 
-     (catch com.mongodb.MongoClientException e#
+     (catch MongoClientException e#
        (condp re-find (.getMessage e#)
          ; This... seems like a bug too
          ; Can also happen when connecting to a hidden replica
@@ -282,7 +298,7 @@
 
          (throw e#)))
 
-     (catch com.mongodb.MongoQueryException e#
+     (catch MongoQueryException e#
        (condp re-find (.getMessage e#)
          #"Could not find host matching read preference"
          (assoc ~op :type :fail, :error :no-host-matching-read-preference)
@@ -295,10 +311,22 @@
          #"code 13436 " (assoc ~op :type :fail, :error :not-primary-or-recovering)
          (throw e#)))
 
-     (catch com.mongodb.internal.connection.MongoWriteConcernWithResponseException e#
+     (catch MongoTimeoutException e#
        (condp re-find (.getMessage e#)
+         ; If we timed out before getting a connection, we clearly can't have
+         ; done anything.
+         #"while waiting for a connection to server"
+         (assoc ~op :type :fail, :error :timeout-waiting-for-connection)
+
+         (throw e#)))
+
+     (catch MongoWriteConcernWithResponseException e#
+       (condp re-find (.getMessage e#)
+         ; Not really clear whether this should be a definite failure or not,
+         ; but writes that fail with this kind of error DO succeed on occasion,
+         ; so let's call it info.
          #"InterruptedDueToReplStateChange"
-         (assoc ~op :type :fail, :error :interrupted-due-to-repl-state-change)
+         (assoc ~op :type :info, :error :interrupted-due-to-repl-state-change)
          (throw e#)))
      ))
 
