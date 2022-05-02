@@ -65,7 +65,9 @@
                          :sharded   (:sharded opts)
                          :nodes     (:nodes opts)
                          :faults    (:nemesis opts)
-                         :partition {:targets [:primaries]}
+                         ;:partition {:targets [:primaries]}
+                         ;:pause     {:targets [:primaries]}
+                         ;:kill      {:targets [:primaries]}
                          :pause     {:targets [nil :one :primaries :majority :all]}
                          :kill      {:targets [nil :one :primaries :majority :all]}
                          :interval  (:nemesis-interval opts)})]
@@ -134,6 +136,9 @@
     :validate [#(and (number? %) (pos? %)) "Must be a positive number"]]
 
    [nil "--read-concern LEVEL" "What level of read concern to use."
+    :default nil]
+
+   [nil "--read-preference LEVEL" "What read preference to use (e.g. 'secondary')"
     :default nil]
 
    [nil "--sharded" "If set, set up a multi-shard MongoDB fronted by Mongos."

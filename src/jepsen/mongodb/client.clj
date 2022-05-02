@@ -206,6 +206,13 @@
     "snapshot" "majority"
     rc))
 
+(defn ^ReadPreference read-preference
+  "Turns a string or keyword read preference into a Mongo ReadPreference. nil
+  is passed through."
+  [pref]
+  (when pref
+    (ReadPreference/valueOf (name pref))))
+
 ;; Error handling
 (defmacro with-errors
   "Remaps common errors; takes an operation and returns a :fail or :info op
@@ -299,14 +306,17 @@
   "Get a DB from a connection. Options may include
 
   :write-concern    e.g. :majority
-  :read-concern     e.g. :local"
+  :read-concern     e.g. :local
+  :read-preference  e.g. :secondary"
   ([conn db-name]
    (.getDatabase conn db-name))
   ([conn db-name opts]
-   (let [rc (read-concern (:read-concern opts))
-         wc (write-concern (:write-concern opts))]
+   (let [rc (read-concern    (:read-concern opts))
+         rp (read-preference (:read-preference opts))
+         wc (write-concern   (:write-concern opts))]
      (cond-> (db conn db-name)
        rc (.withReadConcern rc)
+       rp (.withReadPreference rp)
        wc (.withWriteConcern wc)))))
 
 (defn ^MongoCollection collection

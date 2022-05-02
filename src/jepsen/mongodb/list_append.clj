@@ -2,10 +2,13 @@
   "Elle list append workload"
   (:require [clojure [pprint :refer [pprint]]]
             [clojure.tools.logging :refer [info warn]]
-            [dom-top.core :refer [with-retry]]
+            [dom-top.core :refer [loopr
+                                  with-retry]]
+            [elle.list-append :as elle.list-append]
             [jepsen [client :as client]
                     [checker :as checker]
-                    [util :as util :refer [timeout]]]
+                    [util :as util :refer [timeout
+                                           map-vals]]]
             [jepsen.tests.cycle :as cycle]
             [jepsen.tests.cycle.append :as list-append]
             [jepsen.mongodb [client :as c]]
@@ -45,6 +48,9 @@
          (not (and (every? (comp #{:r} first) txn)
                    (:no-read-only-txn-write-concern test))))
     (.writeConcern (c/write-concern (:txn-write-concern test)))
+
+    (:read-preference test)
+    (.readPreference (c/read-preference (:read-preference test)))
 
     true .build))
 
@@ -138,14 +144,83 @@
   (close! [this test]
     (.close conn)))
 
+(defn divergence-stats-checker
+  "A checker which tries to estimate the fraction of writes which are lost to
+  replica divergence.
+
+  TODO: this is not very good. We use the longest value observed for a key as
+  authoritative, but often Mongo loses a long value and replaces it with a
+  shorter one, which causes us to undercount divergence. We could try to pick
+  the *last* value observed, but of course that's not perfectly rigorous
+  either..."
+  []
+  (reify checker/Checker
+    (check [this test history opts]
+      ; Build up a map of keys to the final observed values for those keys.sorted distinct observed values of that key.
+      (let [sorted-values (->> history
+                               (remove (comp #{:nemesis} :process))
+                               elle.list-append/sorted-values)]
+        (loopr [longest  (transient {})
+                diverged (transient {})]
+               [[k values] sorted-values]
+               ; Find the longest value
+               (let [longest-k (last values)]
+                 (recur
+                   (assoc! longest k longest-k)
+                   ; Now zip through each value and record every value which
+                   ; diverged from the longest version.
+                   (loopr [diverged diverged]
+                          [value values]
+                          ; And for each element...
+                          (recur
+                            (loopr [i        0
+                                    diverged diverged]
+                                   [element value]
+                                   (let [expected (nth longest-k i)]
+                                     (recur (inc i)
+                                            (if (= element expected)
+                                              diverged
+                                              (let [dk (-> diverged
+                                                           (get k #{})
+                                                           (conj element))]
+                                                (assoc! diverged k dk)))))
+                                   diverged)))))
+               ; Great, now that we have the diverged values and longest values
+               ; for k, compute stats
+               (let [longest       (persistent! longest)
+                     diverged      (persistent! diverged)
+                     ; How many observed values in the longest values, across
+                     ; all keys? Note that we're ignoring duplicates here.
+                     longest-count (->> longest
+                                        vals
+                                        (map (comp count set))
+                                        (reduce + 0))
+                     ; How many divergent values?
+                     div-count     (->> diverged
+                                        vals
+                                        (map count)
+                                        (reduce + 0))]
+                 {:valid?         (zero? div-count)
+                  :longest-count  longest-count
+                  :diverged-count div-count
+                  :diverged-frac  (float (/ div-count
+                                            (+ div-count longest-count)))
+                  ;:longest        longest
+                  ;:diverged       diverged
+                  }))))))
+
 (defn workload
   "A generator, client, and checker for a list-append test."
   [opts]
-  (assoc (list-append/test {:key-count          10
-                            :key-dist           :exponential
-                            ;:key-dist           :uniform
-                            :max-txn-length     (:max-txn-length opts 4)
-                            :max-writes-per-key (:max-writes-per-key opts)
-                            :consistency-models [:strong-snapshot-isolation]
-                            :cycle-search-timeout 30000})
-         :client (Client. nil)))
+  (-> (list-append/test {:key-count          10
+                         :key-dist           :exponential
+                         ;:key-dist           :uniform
+                         :max-txn-length     (:max-txn-length opts 4)
+                         :max-writes-per-key (:max-writes-per-key opts)
+                         :consistency-models [:strong-snapshot-isolation]
+                         :cycle-search-timeout 30000})
+         (assoc :client (Client. nil))
+         (update :checker (fn [c]
+                            (checker/compose
+                              {:elle c
+                               :divergence (divergence-stats-checker)})))))
