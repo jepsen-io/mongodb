@@ -201,8 +201,10 @@
                  {:valid?         (zero? div-count)
                   :longest-count  longest-count
                   :diverged-count div-count
-                  :diverged-frac  (float (/ div-count
-                                            (+ div-count longest-count)))
+                  :diverged-frac  (if (zero? (+ div-count longest-count))
+                                    0
+                                    (float (/ div-count
+                                            (+ div-count longest-count))))
                   ;:longest        longest
                   ;:diverged       diverged
                   }))))))
