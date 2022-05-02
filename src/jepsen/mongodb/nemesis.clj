@@ -83,7 +83,10 @@
 (defn nemesis-package
   "Constructs a nemesis and generators for MongoDB based on CLI options."
   [opts]
-  (let [opts (update opts :faults set)]
-    (if (:sharded opts)
-      (sharded-nemesis-package opts)
-      (nc/nemesis-package opts))))
+  (let [opts' (-> opts
+                 (assoc :interval 0) ; Fixed intervals
+                 (update :faults set))]
+    (-> (if (:sharded opts')
+          (sharded-nemesis-package opts')
+          (nc/nemesis-package opts'))
+        (update :generator (partial gen/delay (:interval opts))))))
