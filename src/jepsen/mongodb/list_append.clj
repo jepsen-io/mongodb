@@ -49,9 +49,7 @@
                    (:no-read-only-txn-write-concern test))))
     (.writeConcern (c/write-concern (:txn-write-concern test)))
 
-    (:read-preference test)
-    (.readPreference (c/read-preference (:read-preference test)))
-
+    ; Read preferences must always be primary; no sense in setting a pref here
     true .build))
 
 (defn apply-mop!
