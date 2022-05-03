@@ -181,17 +181,23 @@
 
 ;; Write Concerns
 (defn write-concern
-  "Turns a named (e.g. :majority, \"majority\") into a WriteConcern. Integer strings like \"2\" are converted to a WriteConcern as well."
-  [wc]
-  (when wc
-    (case (name wc)
-      "acknowledged"    WriteConcern/ACKNOWLEDGED
-      "journaled"       WriteConcern/JOURNALED
-      "majority"        WriteConcern/MAJORITY
-      "unacknowledged"  WriteConcern/UNACKNOWLEDGED
-                        (-> (WriteConcern. (Integer/parseInt wc))
-                            ; (.withJournal true)
-                            ))))
+  "Turns a named (e.g. :majority, \"majority\") into a WriteConcern. Integer
+  strings like \"2\" are converted to a WriteConcern as well. Optionally takes
+  a journal option, which can be true (forces journaling), false (disables
+                                                                   journaling),
+  or nil (leaves as default)."
+  ([wc]
+   (write-concern wc nil))
+  ([wc j]
+   (let [wc (when wc
+              (cond-> (case (name wc)
+                        "acknowledged"    WriteConcern/ACKNOWLEDGED
+                        "journaled"       WriteConcern/JOURNALED
+                        "majority"        WriteConcern/MAJORITY
+                        "unacknowledged"  WriteConcern/UNACKNOWLEDGED
+                        (WriteConcern. (Integer/parseInt wc)))
+                (not (nil? j)) (.withJournal j)))]
+     wc)))
 
 (defn read-concern
   "Turns a named (e.g. :majority, \"majority\" into a ReadConcern."
@@ -335,13 +341,15 @@
 
   :write-concern    e.g. :majority
   :read-concern     e.g. :local
-  :read-preference  e.g. :secondary"
+  :read-preference  e.g. :secondary
+  :journal          If present, forces journaling to be enabled or disabled
+                    for write concerns."
   ([conn db-name]
    (.getDatabase conn db-name))
   ([conn db-name opts]
    (let [rc (read-concern    (:read-concern opts))
          rp (read-preference (:read-preference opts))
-         wc (write-concern   (:write-concern opts))]
+         wc (write-concern   (:write-concern opts) (:journal opts))]
      (cond-> (db conn db-name)
        rc (.withReadConcern rc)
        rp (.withReadPreference rp)

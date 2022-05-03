@@ -107,6 +107,8 @@
     :default  0
     :validate [(complement neg?) "Must be non-negative"]]
 
+   [nil "--[no-]journal" "Force journaling for write concerns to be either enabled or disabled. If unset, leaves journaling at the default."]
+
    [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
      :parse-fn parse-nemesis-spec
      :validate [(partial every? #{:pause :kill :partition :clock :member})

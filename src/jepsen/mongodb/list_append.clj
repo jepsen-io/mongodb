@@ -47,7 +47,7 @@
          ; concern.
          (not (and (every? (comp #{:r} first) txn)
                    (:no-read-only-txn-write-concern test))))
-    (.writeConcern (c/write-concern (:txn-write-concern test)))
+    (.writeConcern (c/write-concern (:txn-write-concern test) (:journal test)))
 
     ; Read preferences must always be primary; no sense in setting a pref here
     true .build))
@@ -120,9 +120,7 @@
           (let [txn' (if (and (<= (count txn) 1)
                               (not (:singleton-txns test)))
                        ; We can run without a transaction
-                       (let [db (c/db conn db-name
-                                      {:read-concern  (:read-concern test)
-                                       :write-concern (:write-concern test)})]
+                       (let [db (c/db conn db-name test)]
                          [(apply-mop! test db nil (first txn))])
 
                        ; We need a transaction
