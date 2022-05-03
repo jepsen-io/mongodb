@@ -309,10 +309,12 @@
          #"Could not find host matching read preference"
          (assoc ~op :type :fail, :error :no-host-matching-read-preference)
 
-         #"code 251" (assoc ~op :type :fail, :error :transaction-aborted)
+         #"code 251 " (assoc ~op :type :fail, :error :transaction-aborted)
 
          ; Why are there two ways to report this?
          #"code 10107 " (assoc ~op :type :fail, :error :not-primary-2)
+
+         #"code 11602 " (assoc ~op :type :info, :error :interrupted-due-to-repl-state-change)
 
          #"code 13436 " (assoc ~op :type :fail, :error :not-primary-or-recovering)
          (throw e#)))
