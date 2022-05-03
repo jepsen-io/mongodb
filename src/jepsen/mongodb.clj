@@ -79,6 +79,9 @@
                        (when-let [r (:read-concern opts)] (str " r:" r))
                        (when-let [w (:txn-write-concern opts)] (str " tw:" w))
                        (when-let [r (:txn-read-concern opts)] (str " tr:" r))
+                       (let [j (:journal opts)]
+                         (when-not (nil? j)
+                           (str " j:" j)))
                        (when (:singleton-txns opts) " singleton-txns")
                        " " (str/join "," (map name (:nemesis opts))))
             :pure-generators true
