@@ -14,7 +14,10 @@
             [jepsen.mongodb [client :as c]]
             [slingshot.slingshot :as slingshot])
   (:import (java.util.concurrent TimeUnit)
-           (com.mongodb TransactionOptions
+           (com.mongodb MongoCommandException
+                        MongoNodeIsRecoveringException
+                        MongoNotPrimaryException
+                        TransactionOptions
                         ReadConcern
                         ReadPreference
                         WriteConcern)
@@ -88,6 +91,7 @@
         (when (:sharded test)
           (c/admin-command! conn {:enableSharding db-name}))
 
+        (info "creating collection")
         (let [coll (c/create-collection! db coll-name)]
           (info "Collection created")
           (when (:sharded test)
@@ -103,14 +107,26 @@
                                ;                   :hashed}
                                :numInitialChunks 7})
             (info "Collection sharded"))))
-      (catch com.mongodb.MongoNotPrimaryException e
+      (catch MongoNotPrimaryException e
         ; sigh, why is this a thing
+        (info "Ignoring MongoNotPrimaryException")
         nil)
+      (catch MongoNodeIsRecoveringException e
+        (info "Caught MongoNodeIsRecoveringException" tries (.getMessage e))
+        (if (pos? tries)
+          (do (info "Couldn't create collection:" (.getMessage e) " - retrying")
+              (Thread/sleep 5000)
+              (retry (dec tries)))
+          (throw e)))
       (catch com.mongodb.MongoSocketReadTimeoutException e
         (if (pos? tries)
           (do (info "Timed out sharding DB and creating collection; waiting to retry")
               (Thread/sleep 5000)
               (retry (dec tries)))
+          (throw e)))
+      (catch MongoCommandException e
+        (condp re-find (.getMessage e)
+          #"Collection already exists" nil
           (throw e)))))
 
   (invoke! [this test op]

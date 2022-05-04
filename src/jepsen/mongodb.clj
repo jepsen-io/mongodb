@@ -112,10 +112,8 @@
 
    [nil "--[no-]journal" "Force journaling for write concerns to be either enabled or disabled. If unset, leaves journaling at the default."]
 
-   [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
-     :parse-fn parse-nemesis-spec
-     :validate [(partial every? #{:pause :kill :partition :clock :member})
-                "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
+   [nil "--[no-]lazyfs" "Mounts the MongoDB data dir in a lazyfs, and drops the page cache on process kill."
+    :default true]
 
    [nil "--max-txn-length NUM" "Maximum number of operations in a transaction."
     :default  4
@@ -126,6 +124,12 @@
     :default  256
     :parse-fn parse-long
     :validate [pos? "Must be a positive integer."]]
+
+   [nil "--nemesis FAULTS" "A comma-separated list of nemesis faults to enable"
+     :parse-fn parse-nemesis-spec
+     :validate [(partial every? #{:pause :kill :partition :clock :member})
+                "Faults must be pause, kill, partition, clock, or member, or the special faults all or none."]]
+
 
    [nil "--nemesis-interval SECS" "Roughly how long between nemesis operations."
     :default 2

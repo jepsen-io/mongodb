@@ -11,12 +11,14 @@
                     [util :as util :refer [meh random-nonempty-subset]]]
             [jepsen.control [net :as cn]
                             [util :as cu]]
+            [jepsen.nemesis.lazyfs :as lazyfs]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb [client :as client]]
             [slingshot.slingshot :refer [try+ throw+]]))
 
 (def log-file "/var/log/mongodb/mongod.log")
 (def data-dir "/var/lib/mongodb")
+(def user "mongodb")
 
 (def mongos-dir "/tmp/mongos")
 (def mongos-log-file "/var/log/mongodb/mongos.stdout")
@@ -253,14 +255,14 @@
       (join! test node))
 
     (teardown! [db test node]
-      (stop! test node)
+      (db/kill! db test node)
       (wipe! test node))
 
     db/LogFiles
     (log-files [db test node]
       ; This might fail if the log file doesn't exist
       (c/su (meh (c/exec :chmod :a+r log-file)))
-      [log-file])
+      {log-file "mongod.log"})
 
     db/Process
     (start! [_ test node]
@@ -401,7 +403,7 @@
   (log-files [this test node]
     ; This might fail if the log file doesn't exist
     (c/su (meh (c/exec :chmod :a+r mongos-log-file)))
-    [mongos-log-file]))
+    {mongos-log-file "mongos.log"}))
 
 (defrecord ShardedDB [mongos shards tcpdump]
   db/DB
@@ -423,7 +425,7 @@
 
   db/LogFiles
   (log-files [this test node]
-    (concat ;(db/log-files tcpdump test node)
+    (merge ;(db/log-files tcpdump test node)
             (db/log-files mongos test node)
             (let [shard (shard-for-node this node)]
               (db/log-files (:db shard) (test-for-shard test shard) node))))
@@ -484,12 +486,61 @@
       (db/tcpdump {:filter "host 192.168.122.1"
                    :ports  [client/mongos-port]}))))
 
+(defrecord LazyFSDB [lazyfs mongodb]
+  db/DB
+  (setup! [_ test node]
+    (db/setup! lazyfs test node)
+    (db/setup! mongodb test node))
+
+  (teardown! [_ test node]
+    (try (db/teardown! mongodb test node)
+         (finally
+           (db/teardown! lazyfs test node))))
+
+  db/Primary
+  (setup-primary! [_ test node]
+    (db/setup-primary! mongodb test node))
+
+  (primaries [this test]
+    (db/primaries mongodb test))
+
+  db/LogFiles
+  (log-files [_ test node]
+    (merge (db/log-files mongodb test node)
+           (db/log-files lazyfs test node)))
+
+  db/Process
+  (start! [_ test node]
+    (db/start! mongodb test node))
+
+  (kill! [_ test node]
+    (db/kill! mongodb test node)
+    (lazyfs/lose-unfsynced-writes! lazyfs))
+
+  db/Pause
+  (pause! [_ test node]
+    (db/pause! mongodb test node))
+
+  (resume! [this test node]
+    (db/resume! mongodb test node)))
+
+(defn lazyfs-db
+  "Wraps another Mongo database, making sure that its data directory is a
+  lazyfs mount."
+  [mongodb]
+  (LazyFSDB. (lazyfs/db {:dir   data-dir
+                         :user  user})
+             mongodb))
+
 (defn db
   "Constructs a MongoDB DB based on CLI options.
 
+    :lazyfs      If set, mounts the data directory in a lazyfs, and causes
+                 process kills to wipe the page cache.
     :sharded     If set, deploys a sharded cluster with a config replica set
                  and n shards."
   [opts]
-  (if (:sharded opts)
-    (sharded-db opts)
-    (replica-set-db)))
+  (cond-> (if (:sharded opts)
+            (sharded-db opts)
+            (replica-set-db))
+    (:lazyfs opts) lazyfs-db))
