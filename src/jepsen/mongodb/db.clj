@@ -11,7 +11,7 @@
                     [util :as util :refer [meh random-nonempty-subset]]]
             [jepsen.control [net :as cn]
                             [util :as cu]]
-            [jepsen.nemesis.lazyfs :as lazyfs]
+            [jepsen.lazyfs :as lazyfs]
             [jepsen.os.debian :as debian]
             [jepsen.mongodb [client :as client]]
             [slingshot.slingshot :refer [try+ throw+]]))
