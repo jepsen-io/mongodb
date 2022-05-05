@@ -100,7 +100,9 @@
             :generator (gen/phases
                          (->> (:generator workload)
                               (gen/stagger (/ (:rate opts)))
-                              (gen/nemesis (:generator nemesis))
+                              (gen/nemesis (gen/phases
+                                             (gen/sleep 10)
+                                             (:generator nemesis)))
                               (gen/time-limit (:time-limit opts))))})))
 
 (def cli-opts
@@ -113,7 +115,7 @@
    [nil "--[no-]journal" "Force journaling for write concerns to be either enabled or disabled. If unset, leaves journaling at the default."]
 
    [nil "--[no-]lazyfs" "Mounts the MongoDB data dir in a lazyfs, and drops the page cache on process kill."
-    :default true]
+    :default false]
 
    [nil "--max-txn-length NUM" "Maximum number of operations in a transaction."
     :default  4

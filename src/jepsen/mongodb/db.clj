@@ -496,7 +496,6 @@
     (let [running (try+ (c/exec :pgrep :lazyfs)
                          (catch [:exit 1] _ "not running"))]
       (info "LazyFS is" running))
-    (info (c/exec :ls data-dir))
     (try (db/teardown! mongodb test node)
          (finally
            (db/teardown! lazyfs test node))))
