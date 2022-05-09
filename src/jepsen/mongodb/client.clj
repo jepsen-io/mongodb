@@ -3,8 +3,10 @@
   (:require [clojure.walk :as walk]
             [clojure.tools.logging :refer [info warn]]
             [jepsen [util :as util :refer [timeout]]]
-            [slingshot.slingshot :refer [try+ throw+]])
-  (:import (java.util ArrayList
+            [slingshot.slingshot :refer [try+ throw+]]
+            [wall.hack :as hack])
+  (:import (java.io Closeable)
+           (java.util ArrayList
                       List)
            (java.util.concurrent TimeUnit)
            (com.mongodb Block
@@ -17,15 +19,19 @@
                         MongoSocketReadException
                         MongoSocketReadTimeoutException
                         MongoTimeoutException
-                        ServerAddress
-                        WriteConcern
                         ReadConcern
-                        ReadPreference)
-           (com.mongodb.client MongoClient
+                        ReadPreference
+                        ServerAddress
+                        TransactionOptions
+                        WriteConcern)
+           (com.mongodb.client ClientSession
+                               MongoClient
                                MongoClients
                                MongoCollection
                                MongoDatabase
                                TransactionBody)
+           (com.mongodb.client.internal ClientSessionImpl
+                                        ClientSessionImpl$TransactionState)
            (com.mongodb.client.model Filters
                                      FindOneAndUpdateOptions
                                      ReplaceOptions
@@ -36,12 +42,21 @@
            (com.mongodb.client.result UpdateResult)
            (com.mongodb.internal.connection
              MongoWriteConcernWithResponseException)
-           (com.mongodb.session ClientSession)
-           (org.bson Document)))
+           (com.mongodb.internal.session BaseClientSessionImpl
+                                         ServerSessionPool
+                                         ServerSessionPool$ServerSessionImpl)
+           (com.mongodb.session ServerSession)
+           (org.bson BsonBinary
+                     Document)))
 
 (def mongos-port 27017)
 (def shard-port  27018)
 (def config-port 27019)
+
+(defn close!
+  "Closes any Closeable."
+  [^Closeable c]
+  (.close c))
 
 ;; Basic node manipulation
 (defn addr->node
@@ -278,6 +293,9 @@
 
      (catch com.mongodb.MongoCommandException e#
        (condp re-find (.getMessage e#)
+         #"WriteConflict"
+         (assoc ~op :type :fail, :error :write-conflict)
+
          ; Huh, this is NOT, as it turns out, a determinate failure.
          #"TransactionCoordinatorSteppingDown"
          (assoc ~op :type :info, :error :transaction-coordinator-stepping-down)
@@ -368,10 +386,124 @@
 
 ;; Sessions
 
-(defn start-session
+(defn ^ClientSession start-session
   "Starts a new session"
   [conn]
   (.startSession conn))
+
+; The astute reader may ask: just *why* are we so pre-occupied with hacking our
+; way into the guts of client & server session state and making one session
+; look like another? Because, dearest reader, we intend to do something
+; terrible but apparently not forbidden by the spec, and split a single
+; transaction across *multiple* nodes with independent clients.
+
+(defn ^ServerSession get-server-session
+  "Takes a client session and extracts its corresponding server session."
+  [^ClientSession client-session]
+  (.getServerSession client-session))
+
+(defn ^BaseClientSessionImpl set-server-session!
+  "Takes a client session and sets its server session. Returns client session."
+  [^BaseClientSessionImpl client-session ^ServerSession server-session]
+  (let [field (.getDeclaredField BaseClientSessionImpl "serverSession")]
+    (.setAccessible field true)
+    (.set field client-session server-session))
+  client-session)
+
+(defn ^ClientSessionImpl$TransactionState txn-state
+  "Retrieves the txn state from a client session."
+  [^ClientSessionImpl session]
+  (let [field (.getDeclaredField ClientSessionImpl "transactionState")]
+    (.setAccessible field true)
+    (.get field session)))
+
+(defn ^ClientSessionImpl set-txn-state!
+  "Sets the transactionState field of a client session, and returns it."
+  [^ClientSessionImpl session ^ClientSessionImpl$TransactionState state]
+  (let [field (.getDeclaredField ClientSessionImpl "transactionState")]
+    (.setAccessible field true)
+    (.set field session state))
+  session)
+
+(defn ^TransactionOptions txn-opts
+  "Retrieves the transaction options from a client session."
+  [^ClientSessionImpl session]
+  (let [field (.getDeclaredField ClientSessionImpl "transactionOptions")]
+    (.setAccessible field true)
+    (.get field session)))
+
+(defn ^ClientSessionImpl set-txn-opts!
+  "Sets the transaction options field of a client session, and returns it."
+  [^ClientSessionImpl session ^TransactionOptions opts]
+  (let [field (.getDeclaredField ClientSessionImpl "transactionOptions")]
+    (.setAccessible field true)
+    (.set field session opts))
+  session)
+
+(defn ^ServerSessionPool$ServerSessionImpl
+  set-server-session-impl-transaction-number!
+  "Override a server session's transaction number. Returns the session."
+  [^ServerSessionPool$ServerSessionImpl session ^long txn-no]
+  (let [field (.getDeclaredField ServerSessionPool$ServerSessionImpl
+                                 "transactionNumber")]
+    (.setAccessible field true)
+    (.setLong field session txn-no))
+  session)
+
+(defn ^ServerSessionPool server-session->server-session-pool
+  "Extracts the server session pool from a ServerSessionImpl. This is stored in
+  the implicit instance variable this$0."
+  [^ServerSessionPool$ServerSessionImpl session]
+  (let [field (.getDeclaredField ServerSessionPool$ServerSessionImpl "this$0")]
+    (.setAccessible field true)
+    (.get field session)))
+
+(defn clone-server-session
+  "Takes a server session and returns a copy of it with the same session
+  identifier and transaction number."
+  [^ServerSessionPool$ServerSessionImpl session]
+  (let [; First, extract the session identifier from the original session
+        session-id (.getIdentifier session)
+        identifier (.get session-id "id")
+        ; And the transaction number.
+        txn-no     (.getTransactionNumber session)
+        ; We also need the server session pool so we can make a new session
+        pool       (server-session->server-session-pool session)
+        ; Now construct a fresh session
+        constructor (first (.getDeclaredConstructors
+                             ServerSessionPool$ServerSessionImpl))
+        _ (.setAccessible constructor true)
+        session' (-> constructor
+                     (.newInstance (into-array Object [pool identifier]))
+                     (set-server-session-impl-transaction-number! txn-no))]
+    session'))
+
+(defmacro with-session-like
+  "Takes a vector of a target client session and a source client session.
+  Within body, client session will have its session ID, txn number, transaction
+  state, and transaction options, overridden to look like the source session,
+  then reset at the end of the body."
+  [[target source] & body]
+  `(let [server-session#    (get-server-session ~target)
+         server-session'#   (clone-server-session (get-server-session ~source))
+         txn-state#         (txn-state ~target)
+         txn-state'#        (txn-state ~source)
+         txn-opts#          (txn-opts ~target)
+         txn-opts'#         (txn-opts ~source)]
+     (set-server-session! ~target server-session'#)
+     (set-txn-state!      ~target txn-state'#)
+     (set-txn-opts!       ~target txn-opts'#)
+     (try ~@body
+          (finally
+            (set-server-session!  ~target server-session#)
+            (set-txn-state!       ~target txn-state#)
+            (set-txn-opts!        ~target txn-opts#)))))
+
+(defn notify-message-sent!
+  "Notifies a session that a message was sent in this transaction. We have to
+  force this when we're threading transactions across multiple sessions."
+  [^ClientSessionImpl session]
+  (.notifyMessageSent session))
 
 ;; Transactions
 
@@ -381,6 +513,15 @@
   `(reify TransactionBody
      (execute [this]
        ~@body)))
+
+(defn start-txn!
+  "Starts a txn on a session with the given transaction options."
+  [^ClientSession session ^TransactionOptions opts]
+  (.startTransaction session opts))
+
+(defn commit-txn!
+  [^ClientSession session]
+  (.commitTransaction session))
 
 ;; Actual commands
 

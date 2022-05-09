@@ -7,6 +7,11 @@ tests: 3 for the config replica set, and 3 for each of 2 shards.
 
 lein run test-all -w list-append --nodes-file ~/nodes -r 1000 --concurrency 3n --time-limit 120 --max-writes-per-key 128 --read-concern majority --write-concern majority --txn-read-concern snapshot --txn-write-concern majority --nemesis-interval 1 --nemesis partition --test-count 30
 
+## Workloads
+
+`list-append` performs a mix of non-transactional and transactional appends and reads to documents by primary key.
+`list-append-multi-node` tries to do the same, but splitting requests across multiple nodes. This does not work yet, and may never.
+
 ## License
 
 Copyright © 2020 Jepsen, LLC

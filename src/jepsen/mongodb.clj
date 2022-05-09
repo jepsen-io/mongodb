@@ -11,11 +11,13 @@
             [jepsen.generator :as gen]
             [jepsen.mongodb [db :as db]
                             [list-append :as list-append]
+                            [list-append-multi-node :as list-append-multi-node]
                             [nemesis :as nemesis]]))
 
 (def workloads
-  {:list-append list-append/workload
-   :none        (fn [_] tests/noop-test)})
+  {:list-append             list-append/workload
+   :list-append-multi-node  list-append-multi-node/workload
+   :none                    (fn [_] tests/noop-test)})
 
 (def all-workloads
   "A collection of workloads we run by default."

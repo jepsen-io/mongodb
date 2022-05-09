@@ -77,6 +77,52 @@
                 ;(info :res res)
                 mop))))
 
+(defn create-coll!
+  "Creates and optionally shards the collection for this test."
+  [test conn]
+  (with-retry [tries 5]
+    (let [db (c/db conn db-name test)]
+      (when (:sharded test)
+        (c/admin-command! conn {:enableSharding db-name}))
+
+      (info "creating collection")
+      (let [coll (c/create-collection! db coll-name)]
+        (info "Collection created")
+        (when (:sharded test)
+          ; Shard it!
+          (c/admin-command! conn
+                            {:shardCollection  (str db-name "." coll-name)
+                             :key              {:_id :hashed}
+                             ; WIP; gotta figure out how we're going to
+                             ; generate queries with the shard key in them.
+                             ;:key              {(case (:shard-key test)
+                             ;                     :id :_id
+                             ;                     :value :value)
+                             ;                   :hashed}
+                             :numInitialChunks 7})
+          (info "Collection sharded"))))
+    (catch MongoNotPrimaryException e
+      ; sigh, why is this a thing
+      (info "Ignoring MongoNotPrimaryException")
+      nil)
+    (catch MongoNodeIsRecoveringException e
+      (info "Caught MongoNodeIsRecoveringException" tries (.getMessage e))
+      (if (pos? tries)
+        (do (info "Couldn't create collection:" (.getMessage e) " - retrying")
+            (Thread/sleep 5000)
+            (retry (dec tries)))
+        (throw e)))
+    (catch com.mongodb.MongoSocketReadTimeoutException e
+      (if (pos? tries)
+        (do (info "Timed out sharding DB and creating collection; waiting to retry")
+            (Thread/sleep 5000)
+            (retry (dec tries)))
+        (throw e)))
+    (catch MongoCommandException e
+      (condp re-find (.getMessage e)
+        #"Collection already exists" nil
+        (throw e)))))
+
 (defrecord Client [conn]
   client/Client
   (open! [this test node]
@@ -85,76 +131,33 @@
                                      c/shard-port))))
 
   (setup! [this test]
-    ; Collections have to be predeclared; transactions can't create them.
-    (with-retry [tries 5]
-      (let [db (c/db conn db-name test)]
-        (when (:sharded test)
-          (c/admin-command! conn {:enableSharding db-name}))
-
-        (info "creating collection")
-        (let [coll (c/create-collection! db coll-name)]
-          (info "Collection created")
-          (when (:sharded test)
-            ; Shard it!
-            (c/admin-command! conn
-                              {:shardCollection  (str db-name "." coll-name)
-                               :key              {:_id :hashed}
-                               ; WIP; gotta figure out how we're going to
-                               ; generate queries with the shard key in them.
-                               ;:key              {(case (:shard-key test)
-                               ;                     :id :_id
-                               ;                     :value :value)
-                               ;                   :hashed}
-                               :numInitialChunks 7})
-            (info "Collection sharded"))))
-      (catch MongoNotPrimaryException e
-        ; sigh, why is this a thing
-        (info "Ignoring MongoNotPrimaryException")
-        nil)
-      (catch MongoNodeIsRecoveringException e
-        (info "Caught MongoNodeIsRecoveringException" tries (.getMessage e))
-        (if (pos? tries)
-          (do (info "Couldn't create collection:" (.getMessage e) " - retrying")
-              (Thread/sleep 5000)
-              (retry (dec tries)))
-          (throw e)))
-      (catch com.mongodb.MongoSocketReadTimeoutException e
-        (if (pos? tries)
-          (do (info "Timed out sharding DB and creating collection; waiting to retry")
-              (Thread/sleep 5000)
-              (retry (dec tries)))
-          (throw e)))
-      (catch MongoCommandException e
-        (condp re-find (.getMessage e)
-          #"Collection already exists" nil
-          (throw e)))))
+    (create-coll! test conn))
 
   (invoke! [this test op]
     (let [txn (:value op)]
       (c/with-errors op
         (timeout 5000 (assoc op :type :info, :error :timeout)
-          (let [txn' (if (and (<= (count txn) 1)
+          (let [db   (c/db conn db-name test)
+                txn' (if (and (<= (count txn) 1)
                               (not (:singleton-txns test)))
                        ; We can run without a transaction
-                       (let [db (c/db conn db-name test)]
-                         [(apply-mop! test db nil (first txn))])
+                       [(apply-mop! test db nil (first txn))]
 
                        ; We need a transaction
-                       (let [db (c/db conn db-name test)]
-                         (with-open [session (c/start-session conn)]
-                           (let [opts (txn-options test (:value op))
-                                 body (c/txn
-                                        ;(info :txn-begins)
-                                        (mapv (partial apply-mop!
-                                                       test db session)
-                                              (:value op)))]
-                             (.withTransaction session body opts)))))]
+                       (with-open [session (c/start-session conn)]
+                         (let [opts (txn-options test txn)
+                               body (c/txn
+                                      ;(info :txn-begins)
+                                      (mapv (partial apply-mop!
+                                                     test db session)
+                                            (:value op)))]
+                           (.withTransaction session body opts))))]
             (assoc op :type :ok, :value txn'))))))
 
   (teardown! [this test])
 
   (close! [this test]
-    (.close conn)))
+    (c/close! conn)))
 
 (defn divergence-stats-checker
   "A checker which tries to estimate the fraction of writes which are lost to
