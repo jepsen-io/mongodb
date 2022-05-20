@@ -52,6 +52,14 @@
 (def mongos-port 27017)
 (def shard-port  27018)
 (def config-port 27019)
+(def proxy-port  7901)
+
+(defprotocol Conn
+  "We're juggling mongod, mongos, and possibly a proxy server in front of that.
+  This protocol lets us tell what host and port clients should use to connect
+  to something. We implement this on each DB."
+  (host [this test node] "What host should we use to connect to this DB?")
+  (port [this test] "What port should we use to connect to this DB?"))
 
 (defn close!
   "Closes any Closeable."
@@ -72,35 +80,55 @@
        ~@body)))
 
 ;; Connection management
+(defn config-server?
+  "Takes a test map, and returns true iff this set of nodes is intended to be a
+  configsvr--e.g. if it has a :replica-set-name of 'rs_config'."
+  [test]
+  (= (:replica-set-name test) "rs_config"))
+
 (defn ^MongoClient open
-  "Opens a connection to a node."
-  [node port]
-  (MongoClients/create
-    (.. (MongoClientSettings/builder)
-        (applyToClusterSettings (with-block builder
-                                  (.. builder
-                                      (hosts [(ServerAddress. node port)])
-                                      (serverSelectionTimeout 1 TimeUnit/SECONDS))))
-        (applyToSocketSettings (with-block builder
-                                 (.. builder
-                                     (connectTimeout 5 TimeUnit/SECONDS)
-                                     (readTimeout    5 TimeUnit/SECONDS))))
-        (applyToConnectionPoolSettings (with-block builder
-                                         (.. builder
-                                             (minSize 1)
-                                             (maxSize 1)
-                                             (maxWaitTime 1 TimeUnit/SECONDS))))
-        build)))
+  "Opens a connection to a node. Second arg can be either a test map (in which
+  case the port is derived from (port (:db test)) or an integer (in which case
+  it's used directly."
+  [node test-or-port]
+  (let [host (if (integer? test-or-port)
+               node
+               (host (:db test-or-port) test-or-port node))
+        port (if (integer? test-or-port)
+               test-or-port
+               (port (:db test-or-port) test-or-port))]
+    (info "Connecting to" (str host ":" port))
+    (MongoClients/create
+      (.. (MongoClientSettings/builder)
+          (applyToClusterSettings
+            (with-block builder
+              (.. builder
+                  (hosts [(ServerAddress. host port)])
+                  (serverSelectionTimeout 1 TimeUnit/SECONDS))))
+          (applyToSocketSettings (with-block builder
+                                   (.. builder
+                                       (connectTimeout 5 TimeUnit/SECONDS)
+                                       (readTimeout    5 TimeUnit/SECONDS))))
+          (applyToConnectionPoolSettings
+            (with-block builder
+              (.. builder
+                  (minSize 1)
+                  (maxSize 1)
+                  (maxWaitTime 1 TimeUnit/SECONDS))))
+          build))))
 
 (declare ping)
 
 (defn ^MongoClient await-open*
   "Blocks until (open node) succeeds, and optionally pings."
-  [node port ping?]
+  [node test-or-port ping?]
   (util/await-fn
     (fn conn []
       (try+
-        (let [conn (open node port)]
+        (let [conn (open node test-or-port)
+              port (if (integer? test-or-port)
+                     test-or-port
+                     (port (:db test-or-port) test-or-port))]
           (try
             (when ping?
               ;(.first (.listDatabaseNames conn))

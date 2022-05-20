@@ -50,7 +50,7 @@
 
 (def logging-overrides
   "Custom log levels; Mongo's driver is... communicative"
-  {"jepsen.mongodb.client"          :error
+  {;"jepsen.mongodb.client"          :error
    "org.mongodb.driver.client"      :error
    "org.mongodb.driver.cluster"     :error
    "org.mongodb.driver.connection"  :error})
@@ -119,6 +119,8 @@
    [nil "--[no-]lazyfs" "Mounts the MongoDB data dir in a lazyfs, and drops the page cache on process kill."
     :default false]
 
+   [nil "--local-proxy BIN" "A proxy binary to run locally and make requests to."]
+
    [nil "--max-txn-length NUM" "Maximum number of operations in a transaction."
     :default  4
     :parse-fn parse-long
@@ -142,6 +144,8 @@
 
    [nil "--no-read-only-txn-write-concern" "Don't set write concern on read-only transactions"
     :default false]
+
+   ["-p" "--proxy BIN" "A proxy binary to upload to each node and make requests to."]
 
    ["-r" "--rate HZ" "Approximate number of requests per second, total"
     :default 1000
@@ -174,6 +178,7 @@
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword
+    :default :list-append
     :validate [workloads (cli/one-of workloads)]]
 
    [nil "--write-concern LEVEL" "What level of write concern to use."

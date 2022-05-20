@@ -60,9 +60,7 @@
                             ; not good.
                             (repeat 3 node)
                             (mapv (fn [node]
-                                    (c/open node (if (:sharded test)
-                                                   c/mongos-port
-                                                   c/shard-port)))))))
+                                    (c/open node test))))))
 
   (setup! [this test]
     (list-append/create-coll! test (first conns)))

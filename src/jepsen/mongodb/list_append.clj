@@ -126,9 +126,7 @@
 (defrecord Client [conn]
   client/Client
   (open! [this test node]
-    (assoc this :conn (c/open node (if (:sharded test)
-                                     c/mongos-port
-                                     c/shard-port))))
+    (assoc this :conn (c/open node test)))
 
   (setup! [this test]
     (create-coll! test conn))

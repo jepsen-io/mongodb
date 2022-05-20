@@ -8,12 +8,16 @@
             [jepsen [control :as c]
                     [core :as jepsen]
                     [db :as db]
-                    [util :as util :refer [meh random-nonempty-subset]]]
+                    [util :as util :refer [meh random-nonempty-subset sh]]]
             [jepsen.control [net :as cn]
                             [util :as cu]]
             [jepsen.lazyfs :as lazyfs]
             [jepsen.os.debian :as debian]
-            [jepsen.mongodb [client :as client]]
+            [jepsen.mongodb [client :as client :refer [Conn
+                                                       host
+                                                       port]]]
+            [jepsen.mongodb.db [local-proxy :as local-proxy]
+                               [proxy :as proxy]]
             [slingshot.slingshot :refer [try+ throw+]]))
 
 (def log-file "/var/log/mongodb/mongod.log")
@@ -29,7 +33,8 @@
   "MongoDB has like five different packages to install; these are the ones we
   want."
   ["mongos"
-   "server"])
+   "server"
+   "shell"])
 
 (defn deb-url
   "What's the URL of the Debian package we install?"
@@ -247,6 +252,12 @@
   "This database runs a single replica set."
   []
   (reify
+    Conn
+    (host [_ test node] node)
+    (port [_ test] (if (config-server? test)
+                     client/config-port
+                     client/shard-port))
+
     db/DB
     (setup! [db test node]
       (install! test)
@@ -282,14 +293,12 @@
     db/Primary
     (setup-primary! [_ test node])
 
-    (primaries [_ test]
+    (primaries [this test]
       (try (->> (:nodes test)
                 (real-pmap (fn [node]
                              (with-open [conn (client/open
                                                 node
-                                                (if (config-server? test)
-                                                  client/config-port
-                                                  client/shard-port))]
+                                                (port this test))]
                                ; Huh, sometimes Mongodb DOES return multiple
                                ; primaries from a single request. Weeeeird.
                                (primaries conn))))
@@ -406,6 +415,10 @@
     {mongos-log-file "mongos.log"}))
 
 (defrecord ShardedDB [mongos shards tcpdump]
+  Conn
+  (host [this test node] node)
+  (port [this test] client/mongos-port)
+
   db/DB
   (setup! [this test node]
     ;(db/setup! tcpdump test node)
@@ -487,6 +500,11 @@
                    :ports  [client/mongos-port]}))))
 
 (defrecord LazyFSDB [lazyfs mongodb]
+  Conn
+  (host [_ test node] (host mongodb test node))
+  (port [_ test]
+    (port mongodb test))
+
   db/DB
   (setup! [_ test node]
     (db/setup! lazyfs test node)
@@ -541,9 +559,13 @@
     :lazyfs      If set, mounts the data directory in a lazyfs, and causes
                  process kills to wipe the page cache.
     :sharded     If set, deploys a sharded cluster with a config replica set
-                 and n shards."
+                 and n shards.
+    :proxy       If set, adds a proxy in front of the cluster.
+    :local-proxy If set, adds a local proxy in front of the cluster."
   [opts]
   (cond-> (if (:sharded opts)
             (sharded-db opts)
             (replica-set-db))
-    (:lazyfs opts) lazyfs-db))
+    (:lazyfs      opts) lazyfs-db
+    (:proxy       opts) proxy/db
+    (:local-proxy opts) local-proxy/db))
