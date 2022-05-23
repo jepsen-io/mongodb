@@ -85,6 +85,8 @@
                          (when-not (nil? j)
                            (str " j:" j)))
                        (when (:singleton-txns opts) " singleton-txns")
+                       (when (:proxy opts) " proxy")
+                       (when (:local-proxy opts) " local-proxy")
                        " " (str/join "," (map name (:nemesis opts))))
             :pure-generators true
             :logging {:overrides logging-overrides}
