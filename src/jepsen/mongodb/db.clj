@@ -507,6 +507,7 @@
 
   db/DB
   (setup! [_ test node]
+    (install! test) ; Gives us the user so we can create the directory structure
     (db/setup! lazyfs test node)
     (db/setup! mongodb test node))
 
