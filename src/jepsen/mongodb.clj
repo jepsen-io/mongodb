@@ -98,7 +98,9 @@
                         :clock      (checker/clock-plot)
                         :stats      (checker/stats)
                         :exceptions (checker/unhandled-exceptions)
-                        :workload   (:checker workload)})
+                        :workload   (:checker workload)
+                        :crash      (checker/log-file-pattern
+                                      #"[Ff]atal" "mongod.log")})
             :client    (:client workload)
             :nemesis   (:nemesis nemesis)
             :generator (gen/phases
