@@ -321,6 +321,9 @@
 
      (catch com.mongodb.MongoCommandException e#
        (condp re-find (.getMessage e#)
+         #"error 133 "
+         (assoc ~op :type :fail, :error :failed-to-satisfy-read-preference)
+
          #"WriteConflict"
          (assoc ~op :type :fail, :error :write-conflict)
 
@@ -356,6 +359,8 @@
          (assoc ~op :type :fail, :error :no-host-matching-read-preference)
 
          #"code 251 " (assoc ~op :type :fail, :error :transaction-aborted)
+
+         #"code 133 " (assoc ~op :type :fail, :error :failed-to-satisfy-read-preference)
 
          ; Why are there two ways to report this?
          #"code 10107 " (assoc ~op :type :fail, :error :not-primary-2)
