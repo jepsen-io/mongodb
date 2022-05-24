@@ -162,6 +162,8 @@
    [nil "--read-preference LEVEL" "What read preference to use (e.g. 'secondary')"
     :default nil]
 
+   [nil "--[no-]retry-writes" "Explicitly enables or disables retryable writes at the client level."]
+
    [nil "--sharded" "If set, set up a multi-shard MongoDB fronted by Mongos."
     :default false]
 

@@ -96,26 +96,31 @@
                (host (:db test-or-port) test-or-port node))
         port (if (integer? test-or-port)
                test-or-port
-               (port (:db test-or-port) test-or-port))]
+               (port (:db test-or-port) test-or-port))
+        test (if (integer? test-or-port) {} test-or-port)]
     (info "Connecting to" (str host ":" port))
     (MongoClients/create
-      (.. (MongoClientSettings/builder)
-          (applyToClusterSettings
-            (with-block builder
-              (.. builder
-                  (hosts [(ServerAddress. host port)])
-                  (serverSelectionTimeout 1 TimeUnit/SECONDS))))
-          (applyToSocketSettings (with-block builder
-                                   (.. builder
-                                       (connectTimeout 5 TimeUnit/SECONDS)
-                                       (readTimeout    5 TimeUnit/SECONDS))))
-          (applyToConnectionPoolSettings
-            (with-block builder
-              (.. builder
-                  (minSize 1)
-                  (maxSize 1)
-                  (maxWaitTime 1 TimeUnit/SECONDS))))
-          build))))
+      (cond-> (.. (MongoClientSettings/builder)
+                  (applyToClusterSettings
+                    (with-block builder
+                      (.. builder
+                          (hosts [(ServerAddress. host port)])
+                          (serverSelectionTimeout 1 TimeUnit/SECONDS))))
+                  (applyToSocketSettings (with-block builder
+                                           (.. builder
+                                               (connectTimeout 5 TimeUnit/SECONDS)
+                                               (readTimeout    5 TimeUnit/SECONDS))))
+                  (applyToConnectionPoolSettings
+                    (with-block builder
+                      (.. builder
+                          (minSize 1)
+                          (maxSize 1)
+                          (maxWaitTime 1 TimeUnit/SECONDS)))))
+
+        (boolean? (:retry-writes test))
+        (.retryWrites (:retry-writes test))
+
+        true (.build)))))
 
 (declare ping)
 
