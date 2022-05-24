@@ -19,6 +19,7 @@
                         MongoSocketReadException
                         MongoSocketReadTimeoutException
                         MongoTimeoutException
+                        MongoWriteConcernException
                         ReadConcern
                         ReadPreference
                         ServerAddress
@@ -322,6 +323,13 @@
          ; it info for now.
          #"Could not find host matching read preference"
          (assoc ~op :type :info, :error :no-host-matching-read-preference)
+
+         (throw e#)))
+
+     (catch MongoWriteConcernException e#
+       (condp re-find (.getMessage e#)
+         #"operation was interrupted"
+         (assoc ~op :type :fail, :error :write-concern-interrupted)
 
          (throw e#)))
 
