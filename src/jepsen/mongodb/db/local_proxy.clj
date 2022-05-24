@@ -9,6 +9,7 @@
             [jepsen [control :as c]
                     [core :as jepsen]
                     [db :as db]
+                    [store :as store]
                     [util :as util :refer [meh
                                            pprint-str
                                            random-nonempty-subset
@@ -84,9 +85,8 @@
            )))))
 
 (defn journal-thread
-  "Starts a thread which copies :stdout or :stderr to a log: an atom of string
-  lines."
-  [^Process process running? type log]
+  "Starts a thread which copies :stdout or :stderr to a file."
+  [^Process process running? type ^Writer log]
   (io-thread running? (name type)
              []
              [lines (bs/to-line-seq (case type
@@ -94,9 +94,12 @@
                                       :stdout (.getInputStream process)))]
              (when (seq lines)
                (let [line (first lines)]
-                 (info "Logging" type line)
-                 (swap! log conj line))
-               (next lines))))
+                 ; (info "Logging" type line)
+                 (locking log
+                   (.write log line)
+                   (.write log "\n")
+                   (.flush log))
+                 (next lines)))))
 
 (defn start!
   "Starts the proxy locally for a test."
@@ -113,21 +116,18 @@
                     (redirectInput  ProcessBuilder$Redirect/PIPE)
                     (start))
         running? (atom true)
-        stdout   (atom [])
-        stderr   (atom [])
-        stdout-thread (journal-thread process running? :stdout stdout)
-        stderr-thread (journal-thread process running? :stderr stderr)]
+        log      (io/writer (store/path! test "proxy.log"))
+        stdout-thread (journal-thread process running? :stdout log)
+        stderr-thread (journal-thread process running? :stderr log)]
     {:process process
      :running? running?
-     :stdout   stdout
-     :stderr   stderr
      :stdout-thread stdout-thread
-     :stderr-thread stderr-thread}))
+     :stderr-thread stderr-thread
+     :log           log}))
 
 (defn stop!
   "Stops the local proxy. Takes the same map returned by start!"
-  [{:keys [^Process process running? stdout stderr stdout-thread
-           stderr-thread]}]
+  [{:keys [^Process process running? stdout-thread stderr-thread ^Writer log]}]
   (let [crashed? (not (.isAlive process))]
     (when-not crashed?
       ; Kill
@@ -138,16 +138,17 @@
     @stdout-thread
     @stderr-thread
 
+    ; Close log file
+    (.flush log)
+    (.close log)
+
     (when crashed?
       (throw+ {:type ::crashed
                :exit (.exitValue process)}
               nil
               (str "Local proxy crashed with exit status "
                    (.exitValue process)
-                   ". Before crashing, it wrote to STDOUT:\n\n"
-                   @stdout
-                   "\n\nAnd to STDERR:\n\n"
-                   @stderr)))))
+                   ". Logs are available in store/current/proxy.log.")))))
 
 (defrecord LocalProxyDB [db proxy]
   Conn
@@ -174,12 +175,7 @@
     (db/teardown! db test node)
     (when (and (realized? proxy)
                (= node (jepsen/primary test)))
-      (stop! @proxy)
-      (with-open [w (io/writer "store/current/local-proxy.txt")]
-        (binding [*out* w]
-          (doseq [line (concat @(:stdout @proxy)
-                               @(:stderr @proxy))]
-            (println line))))))
+      (stop! @proxy)))
 
   db/Primary
   (setup-primary! [_ test node]
