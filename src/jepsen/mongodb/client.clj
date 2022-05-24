@@ -106,10 +106,11 @@
                       (.. builder
                           (hosts [(ServerAddress. host port)])
                           (serverSelectionTimeout 1 TimeUnit/SECONDS))))
-                  (applyToSocketSettings (with-block builder
-                                           (.. builder
-                                               (connectTimeout 5 TimeUnit/SECONDS)
-                                               (readTimeout    5 TimeUnit/SECONDS))))
+                  (applyToSocketSettings
+                    (with-block builder
+                      (.. builder
+                          (connectTimeout 5 TimeUnit/SECONDS)
+                          (readTimeout    5 TimeUnit/SECONDS))))
                   (applyToConnectionPoolSettings
                     (with-block builder
                       (.. builder
