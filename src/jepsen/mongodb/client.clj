@@ -331,6 +331,9 @@
          #"operation was interrupted"
          (assoc ~op :type :fail, :error :write-concern-interrupted)
 
+         #"Primary stepped down while waiting for replication"
+         (assoc ~op :type :fail, :error :primary-stepped-down-waiting-for-replication)
+
          (throw e#)))
 
      (catch com.mongodb.MongoCommandException e#
