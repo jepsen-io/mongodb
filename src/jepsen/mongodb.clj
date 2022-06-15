@@ -69,7 +69,7 @@
                          :faults    (:nemesis opts)
                          ;:partition {:targets [:primaries]}
                          ;:pause     {:targets [:primaries]}
-                         ;:kill      {:targets [:primaries]}
+                         ;:kill      {:targets [:all]}
                          :pause     {:targets [nil :one :primaries :majority :all]}
                          :kill      {:targets [nil :one :primaries :majority :all]}
                          :interval  (:nemesis-interval opts)})]

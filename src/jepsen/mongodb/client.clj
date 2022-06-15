@@ -99,7 +99,7 @@
                test-or-port
                (port (:db test-or-port) test-or-port))
         test (if (integer? test-or-port) {} test-or-port)]
-    (info "Connecting to" (str host ":" port))
+    ;(info "Connecting to" (str host ":" port))
     (MongoClients/create
       (cond-> (.. (MongoClientSettings/builder)
                   (applyToClusterSettings
