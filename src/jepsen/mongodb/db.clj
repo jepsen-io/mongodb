@@ -32,8 +32,8 @@
 (def subpackages
   "MongoDB has like five different packages to install; these are the ones we
   want."
-  ["mongos"
-   "server"
+  ["server"
+   "mongos"
    "shell"])
 
 (defn deb-url
@@ -60,7 +60,12 @@
               (let [file (cu/wget! (deb-url test subpackage))]
                 (info "Installing" subpackage (:version test))
                 (c/exec :dpkg :-i :--force-confnew file))
-              (c/exec :systemctl :daemon-reload))))))
+              (c/exec :systemctl :daemon-reload))))
+    ; We may have nuked the data dir if we ran with lazyfs earlier, so ensure
+    ; it exists.
+    (when-not (cu/exists? data-dir)
+      (c/exec :mkdir :-p data-dir)
+      (c/exec :chown (str user ":" user) data-dir))))
 
 (defn config-server?
   "Takes a test map, and returns true iff this set of nodes is intended to be a
