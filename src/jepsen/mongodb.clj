@@ -6,7 +6,7 @@
             [jepsen [cli :as cli]
                     [checker :as checker]
                     [tests :as tests]
-                    [util :as util :refer [parse-long]]]
+                    [util :as util]]
             [jepsen.os.debian :as debian]
             [jepsen.generator :as gen]
             [jepsen.mongodb [db :as db]
