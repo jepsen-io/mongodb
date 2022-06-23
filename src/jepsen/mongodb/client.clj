@@ -2,6 +2,7 @@
   "Wraps the MongoDB Java client."
   (:require [clojure.walk :as walk]
             [clojure.tools.logging :refer [info warn]]
+            [dom-top.core :refer [assert+]]
             [jepsen [util :as util :refer [timeout]]]
             [slingshot.slingshot :refer [try+ throw+]]
             [wall.hack :as hack])
@@ -129,42 +130,46 @@
 (defn ^MongoClient await-open*
   "Blocks until (open node) succeeds, and optionally pings."
   [node test-or-port ping?]
-  (util/await-fn
-    (fn conn []
-      (try+
-        (let [conn (open node test-or-port)
-              port (if (integer? test-or-port)
-                     test-or-port
-                     (port (:db test-or-port) test-or-port))]
-          (try
-            (when ping?
-              ;(.first (.listDatabaseNames conn))
-              (ping conn))
-            conn
-            ; Don't leak clients when they fail
-            (catch Throwable t
-              (.close conn)
-              (throw t))))
-        (catch com.mongodb.MongoTimeoutException e
-          (info "Mongo timeout while waiting for conn; retrying."
-                (.getMessage e))
-          (throw+ {:type ::timed-out-awaiting-connection
-                   :node node
-                   :port port}))
-        (catch com.mongodb.MongoNodeIsRecoveringException e
-          (info "Node is recovering; retrying." (.getMessage e))
-          (throw+ {:type :node-recovering-awaiting-connection
-                   :node node
-                   :port port}))
-        (catch com.mongodb.MongoSocketReadTimeoutException e
-          (info "Mongo socket read timeout waiting for conn; retrying")
-          (throw+ {:type :mongo-read-timeout-awaiting-connection
-                    :node node
-                    :port port}))))
-    {:retry-interval 1000
-     :log-interval   10000
-     :log-message    (str "Waiting for " node ":" port " to be available")
-     :timeout        300000}))
+  (let [port (if (integer? test-or-port)
+               test-or-port
+               (port (:db test-or-port) test-or-port))]
+    (assert+ (integer? port) {:type ::not-integer-port
+                              :db   (when-not (integer? test-or-port)
+                                      (:db test-or-port))
+                              :port port})
+    (util/await-fn
+      (fn conn []
+        (try+
+          (let [conn (open node test-or-port)]
+            (try
+              (when ping?
+                ;(.first (.listDatabaseNames conn))
+                (ping conn))
+              conn
+              ; Don't leak clients when they fail
+              (catch Throwable t
+                (.close conn)
+                (throw t))))
+          (catch com.mongodb.MongoTimeoutException e
+            (info "Mongo timeout while waiting for conn; retrying."
+                  (.getMessage e))
+            (throw+ {:type ::timed-out-awaiting-connection
+                     :node node
+                     :port port}))
+          (catch com.mongodb.MongoNodeIsRecoveringException e
+            (info "Node is recovering; retrying." (.getMessage e))
+            (throw+ {:type :node-recovering-awaiting-connection
+                     :node node
+                     :port port}))
+          (catch com.mongodb.MongoSocketReadTimeoutException e
+            (info "Mongo socket read timeout waiting for conn; retrying")
+            (throw+ {:type :mongo-read-timeout-awaiting-connection
+                     :node node
+                     :port port}))))
+      {:retry-interval 1000
+       :log-interval   10000
+       :log-message    (str "Waiting for " node ":" port " to be available")
+       :timeout        300000})))
 
 (defn ^MongoClient await-open
   "Blocks until (open node) succeeds and the server responds to ping. Helpful
