@@ -7,6 +7,7 @@
             [elle.list-append :as elle.list-append]
             [jepsen [client :as client]
                     [checker :as checker]
+                    [generator :as gen]
                     [util :as util :refer [timeout
                                            map-vals]]]
             [jepsen.tests.cycle :as cycle]
@@ -224,6 +225,45 @@
                   ;:diverged       diverged
                   }))))))
 
+(defn gen-48307
+  "A generator variant which specifically targets
+  https://jira.mongodb.org/browse/SERVER-48307. We produce single writes and a
+  plethora of reads."
+  [opts]
+  (->> (list-append/gen {; We want a decent chance of choosing writes and reads
+                         ; to *different* shards; the exponential approach will
+                         ; concentrate most ops on one shard.
+                         :key-dist       :uniform
+                         :min-txn-length 4
+                         :max-txn-length (:max-txn-length opts 4)
+                         ; The default here, 3, wouldn't give us a decent
+                         ; chance of picking keys from different shards.
+                         :key-count      7
+                         :max-writes-per-key (:max-writes-per-key opts)})
+       ; Ensure every txn writes something
+       (gen/filter (fn ensure-a-write [op]
+                     (->> (:value op)
+                          (map first)
+                          (some #{:append}))))
+       ; Ensure every txn writes to exactly one key
+       (gen/map (fn rewrite [op]
+                  (let [txn       (:value op)
+                        ; Which key will we write?
+                        write-key (->> txn
+                                       (keep (fn [[f k v]]
+                                               (when (= :append f)
+                                                 k)))
+                                       distinct
+                                       rand-nth)
+                        ; Rewrite other writes to reads
+                        txn' (mapv (fn [[f k v :as mop]]
+                                     (if (and (= f :append)
+                                              (not= k write-key))
+                                       [:r k nil]
+                                       mop))
+                                   txn)]
+                    (assoc op :value txn'))))))
+
 (defn workload
   "A generator, client, and checker for a list-append test."
   [opts]
@@ -233,9 +273,11 @@
                          :max-txn-length     (:max-txn-length opts 4)
                          :max-writes-per-key (:max-writes-per-key opts)
                          :consistency-models [:strong-snapshot-isolation]
-                         :cycle-search-timeout 30000})
+                         :cycle-search-timeout 1000})
          (assoc :client (Client. nil))
          (update :checker (fn [c]
                             (checker/compose
                               {:elle c
-                               :divergence (divergence-stats-checker)})))))
+                               :divergence (divergence-stats-checker)})))
+         (cond->
+           (:repro-48307 opts) (assoc :generator (gen-48307 opts)))))

@@ -164,6 +164,8 @@
 
    [nil "--[no-]retry-writes" "Explicitly enables or disables retryable writes at the client level."]
 
+   [nil "--repro-48307" "If set, tries to generate transactions which specifically trigger SERVER-48307, which manifested in version 4.2.6"]
+
    [nil "--sharded" "If set, set up a multi-shard MongoDB fronted by Mongos."
     :default false]
 
