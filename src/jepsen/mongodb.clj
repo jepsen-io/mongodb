@@ -141,6 +141,8 @@
    [nil "--read-preference LEVEL" "What read preference to use (e.g. 'secondary')"
     :default nil]
 
+   [nil "--repro-48307" "If set, tries to generate transactions which specifically trigger SERVER-48307, which manifested in version 4.2.6"]
+
    [nil "--sharded" "If set, set up a multi-shard MongoDB fronted by Mongos."
     :default false]
 
