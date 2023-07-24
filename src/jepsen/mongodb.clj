@@ -182,7 +182,7 @@
    [nil "--txn-write-concern LEVEL" "What level of write concern should we use in transactions?"]
 
    ["-v" "--version STRING" "What version of MongoDB should we test?"
-    :default "4.4.9"]
+    :default "7.0.0-rc8"]
 
    ["-w" "--workload NAME" "What workload should we run?"
     :parse-fn keyword

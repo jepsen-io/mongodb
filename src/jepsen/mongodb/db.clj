@@ -40,9 +40,14 @@
   "What's the URL of the Debian package we install?"
   [test subpackage]
   (let [version       (:version test)
+        rc?           (boolean (re-find #"-rc" version))
+        ; Versions like 1.2.3-rc2 need to become 1.2.3~rc2"
+        version       (str/replace version "-" "~")
         ; Mongo puts a "4.2" in the URL for "4.2.1", so we have to compute that
-        ; too
-        small-version (re-find #"^\d+\.\d+" version)]
+        ; too, except for rcs, which live in 'testing', I think?
+        small-version (if rc?
+                        "testing"
+                        (re-find #"^\d+\.\d+" version))]
     (str "https://repo.mongodb.org/apt/debian/dists/buster/mongodb-org/"
          small-version "/main/binary-amd64/mongodb-org-" subpackage "_"
          version "_amd64.deb")))
@@ -51,6 +56,7 @@
   [test]
   "Installs MongoDB on the current node."
   (c/su
+    ; Prereqs
     (c/exec :mkdir :-p "/tmp/jepsen")
     (c/cd "/tmp/jepsen"
           (doseq [subpackage subpackages]
